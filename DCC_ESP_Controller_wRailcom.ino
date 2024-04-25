@@ -19,7 +19,10 @@
  Important: Tested and works with these library versions
  ESP boards, 2.7.1 works version 3.0.0 does not
  Adafruit INA219 library 1.0.3 works
- ArduinoJSON library 5.13.5  will not work with 6.x.x onwards
+
+
+ 2024-04-25 switch to ArduinoJSON library 7.0.4
+
 
  These libraries need to be downloaded and put in the arduino libraries folder
  ArduinoJson-5.13.5  https://www.arduinolibraries.info/libraries/arduino-json
@@ -34,6 +37,8 @@
 
 
 
+#include <ArduinoJson.h>
+#include <ArduinoJson.hpp>
 #include <Wire.h>
 #include "Global.h"
 #include "DCCcore.h"

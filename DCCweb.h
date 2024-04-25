@@ -1,4 +1,6 @@
 // DCCweb.h
+//2024-04-25 updated to use LittleFS and ArduinoJson 7.0.4
+
 
 #ifndef _DCCWEB_h
 #define _DCCWEB_h
@@ -10,7 +12,7 @@
 #endif
 
 #include "Global.h"
-#include <ArduinoJson.h>   //from arduino library manager.  you want VERSION 5 only!
+#include <ArduinoJson.h>   //from arduino library manager.  Using version 7.0.4
 #include <ESP8266WebServer.h>
 //#include <FS.h>   //SPIFFS library
 #include <LittleFS.h>
@@ -29,12 +31,14 @@ namespace nsDCCweb {
 	void broadcastChanges(void);
 
 	static void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length);
-	static void DCCwebWS(JsonObject& root);
 	static void sendJson(JsonObject& out);
+	static void DCCwebWS(JsonDocument doc);
+	static void sendJson(JsonDocument out);
+	static bool changeToTurnout(uint8_t slot, uint16_t addr, const char* name);
+	static bool changeToTurnout(uint8_t slot, const char* addr, const char* name);
+	static bool changeToSlot(uint8_t slot, uint16_t address, bool useLong, bool use128, const char* name);
 	static bool changeToSlot(uint8_t slot, const char *addr, bool useLong, bool use128, const char *name);
-	static bool changeToTurnout(uint8_t slot, const char *addr, const char *name);
 	static void setPower(bool powerOn);
-
 	static bool cBool(const char *v);
 }
 
