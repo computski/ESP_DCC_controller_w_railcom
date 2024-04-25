@@ -22,8 +22,9 @@ Note: with Visual Micro you change the FS type to upload under option15 in the d
 
 2024-4-25 BUGS. if we connect with the chrome websocket plugin, it works fine, we can see WS data and send it to the server
 The web-page based websockets no longer work properly.  The pages serve ok (I am using Little FS) but the websocket won't establish to the browser
-and times out meaning no data connectivity exists.  Odd.
+and times out meaning no data connectivity exists.  
 
+FIXED there is a GET routine that handles 192.168.6.1/hardware  (not hardware.htm) and this was missing the code to emit the json back to the client
 
 */
 
@@ -83,10 +84,8 @@ bool handleFileRead(String path) { // send the right file to the client (if it e
 
 //render a minimal hardware object as json back to the GET request, this gives the client the wsPort
 void getHardware() {
-	//StaticJsonDocument<600> doc;   //don't need to use static any more
-	//JsonObject& out = doc.createObject();   //do we need to create something any more?
-	//replace out[thing] with doc[thing]
-	
+	Serial.printf("gHW ");
+		
 JsonDocument doc;
 	doc["type"] = "dccUI";
 	doc["cmd"] = "hardware";
@@ -123,10 +122,11 @@ JsonDocument doc;
 	}
 	*/
 
-	Serial.printf("BU1 ");
-	serializeJsonPretty(doc, Serial);
-
 	
+	serializeJsonPretty(doc, Serial);
+	String r;
+	serializeJsonPretty(doc, r);
+	web.send(200, "text/json", r);
 
 
 }
@@ -240,7 +240,24 @@ void nsDCCweb::startWebServices() {
 	//special GET handlers
 	//https://forum.arduino.cc/index.php?topic=476291.0
 	web.on("/hardware", HTTP_GET, []() {getHardware();});
+
+	web.on("/hardware", HTTP_OPTIONS, []() {
+		web.sendHeader("access-control-allow-credentials", "false");
+		web.sendHeader("access-control-allow-headers", "x-requested-with");
+		web.sendHeader("access-control-allow-methods", "GET,OPTIONS");
+		web.send(204);
+	});
+
+
 	web.on("/roster", HTTP_GET, []() {getRoster();});
+
+	web.on("/roster", HTTP_OPTIONS, []() {
+		web.sendHeader("access-control-allow-credentials", "false");
+		web.sendHeader("access-control-allow-headers", "x-requested-with");
+		web.sendHeader("access-control-allow-methods", "GET,OPTIONS");
+		web.send(204);
+	});
+
 	web.begin();    // start the HTTP server
 	Serial.println(F("HTTP server started."));
 
