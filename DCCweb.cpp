@@ -47,13 +47,7 @@ void handleRoot() {
 	trace(Serial.println(F("HTTP server handleRoot."));)
 //2021-12-01 Engine Driver will request the directory root, i.e. / if you activate its Web menu item
 
-	/*
-	if (SPIFFS.exists("/index.htm")) {                            
-		File file = SPIFFS.open("/index.htm", "r");                 
-		size_t sent = web.streamFile(file, "text/html");  //we know its html!
-		file.close();                                      
-	}
-	*/
+
 	if (LittleFS.exists("/index.htm")) {
 		File file = LittleFS.open("/index.htm", "r");
 		size_t sent = web.streamFile(file, "text/html");  //we know its html!
@@ -76,15 +70,7 @@ bool handleFileRead(String path) { // send the right file to the client (if it e
 	trace(Serial.println("handleFileRead: " + path);)
 	if (path.endsWith("/")) path += "index.htm";         // If a folder is requested, send the index file
 	String contentType = getContentType(path);            // Get the MIME type
-	/*
-	if (SPIFFS.exists(path)) {                            // If the file exists
-		File file = SPIFFS.open(path, "r");                 // Open it
-		size_t sent = web.streamFile(file, contentType); // And send it to the client
-		file.close();                                       // Then close the file again
-		return true;
-	}
-	*/
-
+	
 	if (LittleFS.exists(path)) {                            // If the file exists
 		File file = LittleFS.open(path, "r");                 // Open it
 		size_t sent = web.streamFile(file, contentType); // And send it to the client
@@ -219,7 +205,7 @@ void nsDCCweb::startWebServices() {
 	web.begin();    // start the HTTP server
 	Serial.println(F("HTTP server started."));
 
-	//SPIFFS.begin();                           // Start the SPI Flash Files System
+	// Start the  Flash Files System
 	LittleFS.begin();
 
 
