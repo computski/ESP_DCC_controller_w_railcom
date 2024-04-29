@@ -9,22 +9,11 @@ This module handles all HTTP and Websocket connectivity.  HTTP is used to serve 
 and then websockets are used for interaction on that page.  The websocket here is also used to support 
 the JSON Throttle aka DigiTrains, if used.
 
-
-see https://github.com/bblanchon/ArduinoJson
-
 2024-03-25 migrate from SPIFFS to LittleFS
-https://arduino-esp8266.readthedocs.io/en/latest/filesystem.html
-https://www.visualmicro.com/page/ESP8266-SPIFFS-and-LittleFS-FileSystems.aspx
-https://www.visualmicro.com/forums/YaBB.pl?num=1592010921
 https://randomnerdtutorials.com/install-esp8266-nodemcu-littlefs-arduino/  and BTW you cannot do file uploads using Arduino IDE 2x
-
 Note: with Visual Micro you change the FS type to upload under option15 in the dropdowns
 
-2024-4-25 BUGS. if we connect with the chrome websocket plugin, it works fine, we can see WS data and send it to the server
-The web-page based websockets no longer work properly.  The pages serve ok (I am using Little FS) but the websocket won't establish to the browser
-and times out meaning no data connectivity exists.  
-
-FIXED there is a GET routine that handles 192.168.6.1/hardware  (not hardware.htm) and this was missing the code to emit the json back to the client
+2024-04-26 migrate to ArduinoJson 7x see https://github.com/bblanchon/ArduinoJson
 
 */
 
@@ -84,7 +73,6 @@ bool handleFileRead(String path) { // send the right file to the client (if it e
 
 //render a minimal hardware object as json back to the GET request, this gives the client the wsPort
 void getHardware() {
-	Serial.printf("gHW ");
 		
 JsonDocument doc;
 	doc["type"] = "dccUI";
@@ -112,56 +100,24 @@ JsonDocument doc;
 
 
 //We can avoid a String class, but need to guesstimate a useful buffer size
-/*
 	char jsonChar[512];
-	//out.printTo((char*)jsonChar, out.measureLength() + 1);
-	doc.prettyPrintTo(jsonChar, sizeof(jsonChar)); //if you want to be more explicit to avoid buffer overun
+	serializeJsonPretty(doc, jsonChar, sizeof(jsonChar));
 	web.send(200, "text/json", jsonChar);
-	if (sizeof(jsonChar) < out.measurePrettyLength()) {
-		Serial.printf("BU1 %d\n\r", out.measurePrettyLength());
-	}
-	*/
-
-	
-	serializeJsonPretty(doc, Serial);
-	String r;
-	serializeJsonPretty(doc, r);
-	web.send(200, "text/json", r);
-
 
 }
 
 //render loco roster as json back to the GET request
 void getRoster() {
-	/*
-	DynamicJsonBuffer jsonBuffer;
-	JsonObject& root = jsonBuffer.createObject();
-	root["type"] = "dccUI";
-	root["cmd"] = "roster";
-	JsonArray& slots = root.createNestedArray("locos");
-	*/
-
-	//in 7 doc knows you want to add elements to the root. no need for createOBject
-	//in 7 nested arrays are smartpointers
+	//JSON 7 doc knows you want to add elements to the root. no need for createOBject
+	//JSON 7 nested arrays are smartpointers
 
 	JsonDocument doc;
 	doc["type"] = "dccUI";
 	doc["cmd"] = "roster";
-	JsonArray slots = doc.createNestedArray("locos");
-
-	
-	
+	JsonArray slots = doc["locos"].to<JsonArray>();
+		
 	int i = 0;
 	for (auto loc : loco) {
-		/* old ver 5
-			JsonObject& s = jsonBuffer.createObject();
-			s["slot"] = i++;
-			s["addr"] = loc.address;
-			s["useLong"] = loc.useLongAddress;
-			s["use128"] = loc.use128;
-			slots.add(s);
-			Serial.printf("slot %d \r\n", i);
-			*/
 	
 	//in 7 we add another doc
 		JsonDocument s;
@@ -172,13 +128,6 @@ void getRoster() {
 		slots.add(s);
 		Serial.printf("slot %d \r\n", i);
 	}
-
-
-	/* ver 5
-	root.prettyPrintTo(Serial);
-	String r;
-	root.prettyPrintTo(r);
-	*/
 
 	serializeJsonPretty(doc, Serial);
 	String r;
@@ -300,20 +249,9 @@ void nsDCCweb::webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, siz
 	  //Serial.printf("[%u] get Text: %s\n", num, payload);
 		trace(Serial.printf("\nfrom WS: %s\n", payload);)
 		
-		/*Json 5 deserialise this. Need 6 value pairs or more, use a dynamic buffer
-		DynamicJsonDocument jsonBuffer;
-		JsonObject& root = jsonBuffer.parseObject(payload);
-		//CAUTION: parseObject will modify payload
-		
-		if (!root.success()) {
-			trace(Serial.println(F("parseObject() failed"));)
-			return;
-		}
-		*/
 
-
-			//2024-4-25 we are expecting inbound websocket data to be a json string
-//ver 7
+		//2024-4-25 we are expecting inbound websocket data to be a json string
+		//JSON 7
 		JsonDocument doc;
 		DeserializationError err = deserializeJson(doc, payload);
 		if (err) {
@@ -322,7 +260,6 @@ void nsDCCweb::webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, siz
 			)
 			return;
 		}
-
 
 
 		const char *sType= doc["type"];   
@@ -343,22 +280,9 @@ void nsDCCweb::webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, siz
 
 
 void nsDCCweb::sendJson(JsonObject& out) {
-	//char* jsonChar;   //this will not work, its a pointer to an as yet undefined buffer
-	//out.printTo((char*)jsonChar, out.measureLength() + 1);
-
-	
 	//We can avoid a String class, but need to guesstimate a useful buffer size
 	//2021-10-07 payload increased to 800 bytes to support max loco=8
 	char payload[800];
-	
-	/*JSON 5
-	out.printTo(payload, sizeof(payload)); //if you want to be more explicit to avoid buffer overun
-	webSocket->broadcastTXT(payload);
-	if (sizeof(payload) < out.measureLength()) {
-		Serial.printf("BU2 %d\n\r", out.measureLength());
-	}
-	*/
-
 	//JSON 7
 	serializeJson(out, payload, sizeof(payload));
 	webSocket->broadcastTXT(payload);
@@ -377,15 +301,10 @@ void nsDCCweb::sendJson(JsonDocument out) {
 }
 
 
-
-
-
-
-
 /// <summary>
-/// Overload. process a JSON inbound document
+/// Process a JSON inbound document
 /// </summary>
-/// <param name="doc"></param>
+/// <param name="doc">inbound json document that has been deserialised and error checked</param>
 void nsDCCweb::DCCwebWS(JsonDocument doc) {
 	const char* cmd = doc["cmd"];
 	if (cmd == nullptr) return;
@@ -692,8 +611,8 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 		JsonDocument out;
 		out["type"] = "dccUI";
 		out["cmd"] = "roster";
-		JsonArray slots = out.createNestedArray("locos");
-		//https://arduinojson.org/v5/api/jsonobject/createnestedarray/
+		JsonArray slots = out["locos"].to<JsonArray>();
+	
 		i = 0;
 		for (auto loc : loco) {
 			JsonDocument s;
@@ -824,8 +743,8 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 		JsonDocument out;
 		out["type"] = "dccUI";
 		out["cmd"] = "turnout";
-		JsonArray slots = out.createNestedArray("turnouts");
-		//https://arduinojson.org/v5/api/jsonobject/createnestedarray/
+		JsonArray slots = out["turnouts"].to<JsonArray>();
+		
 		i = 0;
 		for (auto t : turnout) {
 			JsonDocument s;
@@ -1079,8 +998,8 @@ void nsDCCweb::broadcastChanges(void) {
 		JsonDocument out;
 		out["type"] = "dccUI";
 		out["cmd"] = "roster";
-		JsonArray slots = out.createNestedArray("locos");
-		//https://arduinojson.org/v5/api/jsonobject/createnestedarray/
+		JsonArray slots = out["locos"].to<JsonArray>();
+		
 		int i = 0;
 		for (auto loc : loco) {
 			JsonDocument s;
@@ -1112,7 +1031,7 @@ void nsDCCweb::broadcastChanges(void) {
 	JsonDocument out;
 	out["type"] = "dccUI";
 	out["cmd"] = "turnout";
-	JsonArray slots = out.createNestedArray("turnouts");
+	JsonArray slots = out["turnouts"].to<JsonArray>();
 	i = 0;
 	for (auto t : turnout) {
 		JsonDocument s;

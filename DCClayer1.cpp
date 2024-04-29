@@ -1,8 +1,9 @@
 // 
 // 
 // 
-
+#include "Global.h"
 #include "DCClayer1.h"
+
 
 /*DCClayer1 puts a DCC signal on the track.  It will continuously write the DCCbuffer to the track
 The routine also sets a msTickFlag every 10mS which the main loop can use for general timing such as
@@ -96,6 +97,11 @@ Note: using non PWM compat mode, the timebase is 200nS.
 	static uint16_t dcc_maskInverse = 0;
 	static uint16_t enable_mask = 0;
 	static uint16_t enable_maskInverse = 0;
+	static uint16_t brake_mask = 0;  
+
+#ifdef PIN_RAILCOM_SYNC
+		static uint16_t dcc_sync = 0;
+#endif
 
 	static uint8_t  dccCount;
 
@@ -130,7 +136,6 @@ Note: using non PWM compat mode, the timebase is 200nS.
 	*/
 
 
-	//static void ICACHE_RAM_ATTR dcc_intr_handler(void) //deprecated
 	static void IRAM_ATTR dcc_intr_handler(void) {
 		/*set the period based on the bit-type we queued up in the last interrupt*/
 
@@ -159,27 +164,76 @@ Note: using non PWM compat mode, the timebase is 200nS.
 			break;
 		case DCC_CUTOUT_START:
 			WRITE_PERI_REG(&timer->frc1_load, ticksCutoutStart);
-			//this is a pseudo start to a new bit
-			gpio->out_w1ts = dcc_mask;  //set bits to logic 1
-			gpio->out_w1tc = dcc_maskInverse;  //set bits to logic 0
+			//this is a pseudo start to a new 1 bit, we go logic hi
+
+			if (brake_mask == 0) {
+				//L298 and BT2 devices
+				gpio->out_w1ts = dcc_mask;  //set bits to logic 1
+				gpio->out_w1tc = dcc_maskInverse;  //set bits to logic 0
+			}
+			else 
+			{//LMD 18200 device
+				gpio->out_w1ts = dcc_mask;  //set bits to logic 1
+				//leave output enabled as bi-polar as normal
+			}
+
+			
+	#ifdef PIN_RAILCOM_SYNC
+			gpio->out_w1ts = dcc_sync;
+	#endif  
+
+			//2024-4-28 MORE WORK to be done.  mask_brake !=0 then we are in LMD18200 mode 
+			//If no brake was set (i.e. brake_mask===0) then we are driving the h bridge through the dcc_mask pins and ignoring dcc_mask inverse
+			//dcc_mask needs to be driven low, i.e. all DCC pins in phase.  and do we need a psuedo start to a new bit?  is the edge supposed to go hi? YES for TcS
+			//so yes it is a pseudo one_h part but it actually ends with a low part.
+			//it happens after every packet so arguably its theiving one of the series of preamble 1s that start the next packet.  Or adding a 15th preamble-railcom bit if you like
+			//So actually we need to control the H bridge more precisely.  we have to start a 1 bit then after TcS initiate a cutout.
 			break;
+
 		case DCC_CUTOUT:
 			WRITE_PERI_REG(&timer->frc1_load, ticksCutout);
-			//assert a railcom cutout.
-			//IMPORTANT: on some systems, enable makes the power go open circuit, in which case the cutout needs to be facilitated through the dcc drive pins
-			//rather than enable.  If we execute through enable, the dcc outputs remain as they were in the preceeding DCC_ONE_L (as an IDLE preceeds the cutout)
-			gpio->out_w1ts = enable_maskInverse;
-			gpio->out_w1tc = enable_mask; 
+			//assert a railcom cutout by taking all H bridge outputs to logic low and asserting ground on both rails
+			//the H bridge needs to remain enabled
+			
+			if (brake_mask == 0) {
+				//take all outputs to ground but leave enabled
+				//by or-ing both mask and maskInverse we don't care what logic level is needed to drive a low on the line
+				gpio->out_w1tc = dcc_mask | dcc_maskInverse;
+			}
+			else
+			{//LMD 18200 device 
+				gpio->out_w1ts = brake_mask;  //set brake logic hi
+				gpio->out_w1tc = dcc_mask;  //set outputs logic low
+				
+			}
+			
 			dccCount += 7;
 			break;
+
 		case DCC_CUTOUT_END:
 			WRITE_PERI_REG(&timer->frc1_load, ticksCutoutEnd);
-			//this is a pseudo end of a bit. re-enable power but also assert a low
+			//this is a pseudo end of a bit, assert a low-half of a bit
 			//you cannot re-write to same gpio register quickly as first instruction is not acted on.  instead, OR the commands together
-			//2023-09-29 only re-enable power if trip is not active
-			if (!DCCpacket.trackPower) break;
-			gpio->out_w1ts = enable_mask | dcc_maskInverse;
-			gpio->out_w1tc = enable_maskInverse | dcc_mask;
+						
+			if (brake_mask == 0) {
+				//output a pseudo low part of bit
+				gpio->out_w1ts = dcc_maskInverse;
+				gpio->out_w1tc = dcc_mask;
+			}
+			else
+			{//LMD 18200 device 
+				gpio->out_w1tc = brake_mask; //dcc output is already low from prior state, now we just re-enable pipolar power
+			}
+
+
+
+			//2024-4-29 leave power enable untouched
+			//if (!DCCpacket.trackPower) break;
+			//gpio->out_w1ts = enable_mask | dcc_maskInverse;
+			//gpio->out_w1tc = enable_maskInverse | dcc_mask;	
+#ifdef PIN_RAILCOM_SYNC
+			gpio->out_w1tc = dcc_sync;
+#endif  
 			break;
 			/*the delay gets executed and the block below sets next-state and queues up next databit*/
 		}
@@ -189,15 +243,35 @@ Note: using non PWM compat mode, the timebase is 200nS.
 		//this memory barrier compiler instruction is left in from the code I leveraged
 		asm volatile ("" : : : "memory");
 
-		//do power assert here, before we change DCCperiod in the next block
+		//POWER OVERLOAD: do power assert here, before we change DCCperiod in the next block
 		if (++dccCount >= ticksMS) {
 			dccCount = 0;
 			DCCpacket.msTickFlag = true;
+			
+			/*
 			if (DCCperiod != DCC_CUTOUT) {
 				//only assert system power on/off outside of cutouts
 				gpio->out_w1ts = DCCpacket.trackPower ? enable_mask : enable_maskInverse;
 				gpio->out_w1tc = DCCpacket.trackPower ? enable_maskInverse : enable_mask;
 			}
+			*/
+
+			if (brake_mask == 0) {
+				//L298 and IBT devices, control based on the enable pin
+				gpio->out_w1ts = DCCpacket.trackPower ? enable_mask : enable_maskInverse;
+				gpio->out_w1tc = DCCpacket.trackPower ? enable_maskInverse : enable_mask;
+			}
+			else
+			{//LMD 18200 device. The PWM pin is always high.  Taking brake high will ensure
+			//both output drivers have the same polarity as dictated by dir, i.e we don't care about dir
+				
+				gpio->out_w1ts = DCCpacket.trackPower ? 0 : brake_mask;  //power off, assert brake high
+				gpio->out_w1tc = DCCpacket.trackPower ? brake_mask : 0;  //power on, assert brake low
+
+			}
+
+
+
 		}
 
 
@@ -317,9 +391,15 @@ Note: using non PWM compat mode, the timebase is 200nS.
 	}
 
 
-	//Initialisation. call repeatedly to activate additional DCC outputs
-	//void ICACHE_FLASH_ATTR dcc_init (uint32_t pin_pwm,uint32_t pin_enable,bool phase, bool invert)   //ICACHE_FLASH_ATTR is deprecated
-	void IRAM_ATTR dcc_init(uint32_t pin_pwm, uint32_t pin_enable, bool phase, bool invert)
+	
+	/// <summary>
+	/// Initialisation. call repeatedly to activate additional DCC outputs
+	/// </summary>
+	/// <param name="pin_dcc">GPIO pin to carry DCC signal</param>
+	/// <param name="pin_enable">GPIO pin to enable power</param>
+	/// <param name="phase">phase of DCC signal</param>
+	/// <param name="invert">inversion of enable logic</param>
+	void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase, bool invertEnable)
 	{
 		//load with an IDLE packet
 		DCCpacket.data[0] = 0xFF;
@@ -327,24 +407,33 @@ Note: using non PWM compat mode, the timebase is 200nS.
 		DCCpacket.data[2] = 0xFF;
 		DCCpacket.packetLen = 3;
 		
-		pinMode(pin_pwm, OUTPUT);
+		pinMode(pin_dcc, OUTPUT);
 		pinMode(pin_enable, OUTPUT);
 
 		if (phase) {
-			dcc_mask |= (1 << pin_pwm);
+			dcc_mask |= (1 << pin_dcc);
 		}
 		else {
-			dcc_maskInverse |= (1 << pin_pwm);
+			dcc_maskInverse |= (1 << pin_dcc);
 		}
 		
 		/*set up enable pin(s)*/
-		if (invert) {
+		if (invertEnable) {
 			enable_maskInverse |= (1 << pin_enable);
 		}
 		else {
 			enable_mask |= (1 << pin_enable);
 		}
-		
+
+
+#ifdef PIN_RAILCOM_SYNC
+		//2024-04-28 Special debug for railcom, make this sync pin an output
+		pinMode(PIN_RAILCOM_SYNC, OUTPUT);
+		digitalWrite(PIN_RAILCOM_SYNC, HIGH);
+		Serial.println("pin railcom");
+		dcc_sync |= (1 << PIN_RAILCOM_SYNC);
+#endif
+
 
 #if PWM_USE_NMI
 		ETS_FRC_TIMER1_NMI_INTR_ATTACH(dcc_intr_handler);
@@ -360,7 +449,76 @@ Note: using non PWM compat mode, the timebase is 200nS.
 	}
 
 
-//DC pwm routines
+	/// <summary>
+	/// Overload for LMD18200 device
+	/// </summary>
+	/// <param name="pin_pwm">GPIO pin that supports dcc signal</param>
+	/// <param name="pin_enable">GPIO pin that enables the output</param>
+	/// <param name="pin_brake"></param>
+	void IRAM_ATTR dcc_init_LMD18200(uint32_t pin_pwm, uint32_t pin_dir, uint32_t pin_brake)
+	{
+		//with the LMD18200 PWM is always held high.  We control dcc with the dir pin and assert power with the brake pin
+		//enable_mask is unused, brake_mask is
+		pinMode(pin_pwm, OUTPUT);
+		digitalWrite(pin_pwm, HIGH);  // keep pin permanently high, i.e. we can tie high with a jumper and save port
+
+		pinMode(pin_brake, OUTPUT);
+		digitalWrite(pin_brake, HIGH);  //Start with power disabled
+		brake_mask |= (1 << pin_brake);
+	
+		pinMode(pin_dir, OUTPUT);
+		dcc_mask |= (1 << pin_dir);
+
+		//load with an IDLE packet
+		DCCpacket.data[0] = 0xFF;
+		DCCpacket.data[1] = 0;
+		DCCpacket.data[2] = 0xFF;
+		DCCpacket.packetLen = 3;
+		
+#ifdef PIN_RAILCOM_SYNC
+		//2024-04-28 Special debug for railcom, make this sync pin an output
+		pinMode(PIN_RAILCOM_SYNC, OUTPUT);
+		digitalWrite(PIN_RAILCOM_SYNC, HIGH);
+		Serial.println("pin railcom");
+		dcc_sync |= (1 << PIN_RAILCOM_SYNC);
+#endif
+
+
+#if PWM_USE_NMI
+		ETS_FRC_TIMER1_NMI_INTR_ATTACH(dcc_intr_handler);
+#else
+		ETS_FRC_TIMER1_INTR_ATTACH(dcc_intr_handler, NULL);
+
+#endif
+
+		TM1_EDGE_INT_ENABLE();
+		ETS_FRC1_INTR_ENABLE();
+		RTC_REG_WRITE(FRC1_LOAD_ADDRESS, 0);  //This starts timer.  +++++++++ RTC_REG_WRITE is deprecated ++++++
+		timer->frc1_ctrl = TIMER1_DIVIDE_BY_16 | TIMER1_ENABLE_TIMER;
+
+		Serial.println("LMD18200");
+	}
+
+
+	//2024-4-29 rather than infering H-bridge type from brake_mask==0 we should have conditional compilation based on a defined H_BRIDGE_TYPE
+	//the program logic should only have dcc signal and enable signal.  how these map to various pins is an issue to do with the defined bridge type
+	//you could argue brake is equivalent to enable, but its behaviour is not.  Or maybe it is.
+	//if you tie the LMD PWM pin high, then brake is equivalent to not-enable.  then there's one dcc pin (mapped to dir) and its in-phase
+
+
+	//Yeah so I think we can simplify what I have just written...
+	//Maybe not.  Enable is intended to remove track power (go open or short cct).  Railcom instead asserts a short.
+	//so the RC cutout is not equivalent to not-enable, unless this is guaranteed to pull both rails to ground.  (i.e. open circuit is no good)
+	//for the L298 and IBT taking not-enable will result in an open circuit.
+	//Look at it another way.  there is no need to gate-enable if you have independent control of both sides of the H bridge.  This is true for the L298 and LMD but not the IBT2.
+	//The IBT2 has its 2 parts of the half bridge hard-wired as always the inverse with a 74 inverter.  i.e. it cannot do 'fast stop'
+	//BUT you also wish to avoid dc spikes at power up.  Most of these bridges achieve this by disabling the outputs.  You could do this with an RC delay.
+	//So really, i could redesign the board to just do railcom for LMD and L298 devices.  if IBT is done at all, it won't support railcom
+
+
+#pragma region DC CONTROL
+	
+	//DC pwm routines
 #define DC_COUNT_RELOAD  140U   //10mS counting complete duty periods
 #define DUTY_PERIOD 357U  //14kHz with 200nS ticks
 #define KICK_COUNT 10U
@@ -377,7 +535,6 @@ Note: using non PWM compat mode, the timebase is 200nS.
 	
 	
 	//interrupt handler for DC pwm mode
-	//static void ICACHE_RAM_ATTR pwm_intr_handler(void) //deprecated
 		static void IRAM_ATTR pwm_intr_handler(void) {
 		if (DCCpacket.trackPower) {
 			
@@ -538,7 +695,7 @@ Note: using non PWM compat mode, the timebase is 200nS.
 
 
 	//call with a pwm pin and direction pin
-	void ICACHE_FLASH_ATTR dc_init(uint32_t pin_pwm, uint32_t pin_dir, bool phase, bool invert){
+	void IRAM_ATTR dc_init(uint32_t pin_pwm, uint32_t pin_dir, bool phase, bool invert){
 		//load with an IDLE packet
 		DCCpacket.data[0] = 0xFF;
 		DCCpacket.data[1] = 0;
@@ -561,7 +718,8 @@ Note: using non PWM compat mode, the timebase is 200nS.
 		else {
 			dir_mask |= (1 << pin_dir);
 	}
-		
+	
+
 
 #if PWM_USE_NMI
 		ETS_FRC_TIMER1_NMI_INTR_ATTACH(pwm_intr_handler);
@@ -575,5 +733,7 @@ Note: using non PWM compat mode, the timebase is 200nS.
 		timer->frc1_ctrl = TIMER1_DIVIDE_BY_16 | TIMER1_ENABLE_TIMER;
 }
 
-	
+
+#pragma endregion
+
 

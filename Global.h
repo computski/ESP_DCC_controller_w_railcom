@@ -273,9 +273,12 @@ dcc_init(14,13,true,false);
 
 
 #elif defined(WEMOS_D_MINI_RAILCOM)
-#define USE_ANALOG_MEASUREMENT
+#define nUSE_ANALOG_MEASUREMENT   //we are NOT using analogue measurement on the railcom board
 //#define ANALOG_SCALING 1.95  //1.65v is 512 conversion for 1000mA (1.18 to match multimeter RMS)
 #define ANALOG_SCALING 3.9  //when using A and B in parallel  (2.36 to match multimeter RMS)
+
+//IDLE_SYNC is used to debug railcom only.  it puts a sync pulse on GPIO15
+#define PIN_RAILCOM_SYNC	15  //D8 GPIO15, normally would use for ESTOP as an input
 
 #define	PIN_SCL		2 
 #define	PIN_SDA		0 
@@ -288,11 +291,16 @@ dcc_init(14,13,true,false);
 
 //GPIO15 goes to JP2 //IO15 has on board 10k pulldown, IO15 must be low for boot
 
-#define DCC_PINS \
+#define nDCC_PINS \
 dcc_init(12,13,true,false);\
 dcc_init(14,13,false,false);
 //note these pins define dcc output, enable output, phase of dcc and inversion of enable
 //for debug I have taken antiphase dcc on one pin.
+
+#define DCC_PINS \
+dcc_init_LMD18200(13,14,12);
+//when i rewire board, will use this single entry
+
 
 #define KEYPAD_ADDRESS 0x21   //pcf8574
 //addr, en,rw,rs,d4,d5,d6,d7,backlight, polarity.   we are using this as a 4 bit device

@@ -1875,6 +1875,7 @@ void DCCcoreBoot() {
 		pinMode(PIN_ESTOP, INPUT_PULLUP); //pull low to signal Emergency Stop
 #endif	
 
+
 	power.trackPower = false;
 
 	/*LCD initialise block*/
@@ -1957,6 +1958,7 @@ void DCCcoreBoot() {
 	/*INA219 current sensor*/
 	ina219.begin();  // Initialize first board (default address 0x40)
 	ina219Mode(true); //modify ina config to do 8.5mS averaged samples
+	
 }
 
 /*+++ CORE DCC ROUTINE, CALL FROM MAIN LOOP +++

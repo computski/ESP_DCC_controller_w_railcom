@@ -34,8 +34,8 @@
 
 	extern volatile DCCBUFFER DCCpacket;
 
-	void ICACHE_FLASH_ATTR dcc_init(uint32_t pin_pwm, uint32_t pin_enable, bool phase, bool invert);
-
-	void ICACHE_FLASH_ATTR dc_init(uint32_t pin_pwm, uint32_t pin_dir, bool phase, bool invert);
+	void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase, bool invertEnable);
+	void IRAM_ATTR dcc_init_LMD18200(uint32_t pin_pwm, uint32_t pin_dir, uint32_t pin_brake);
+	void IRAM_ATTR dc_init(uint32_t pin_pwm, uint32_t pin_dir, bool phase, bool invert);
 
 #endif

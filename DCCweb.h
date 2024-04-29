@@ -14,7 +14,6 @@
 #include "Global.h"
 #include <ArduinoJson.h>   //from arduino library manager.  Using version 7.0.4
 #include <ESP8266WebServer.h>
-//#include <FS.h>   //SPIFFS library
 #include <LittleFS.h>
 #include <WebSockets.h>  //from arduino library manager. Markus Sattler v2.1
 #include <WebSocketsServer.h>
