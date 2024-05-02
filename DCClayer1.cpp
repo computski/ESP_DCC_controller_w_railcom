@@ -10,6 +10,10 @@ The routine also sets a msTickFlag every 10mS which the main loop can use for ge
 keyboard scans.
 
 Note: using non PWM compat mode, the timebase is 200nS.
+
+CAUTION: you cannot write consecutively to w1ts or w1tc, as the second write seems to null the first.
+Instead you should OR the bits together e.g. gpio->w1ts = this | that
+//https://arduino.stackexchange.com/questions/44531/arduino-esp8266-direct-fast-control-of-the-digital-pins
 */
 
 #include <c_types.h>
@@ -222,18 +226,13 @@ Note: using non PWM compat mode, the timebase is 200nS.
 			}
 			else
 			{//LMD 18200 device 
-				gpio->out_w1tc = brake_mask; //dcc output is already low from prior state, now we just re-enable pipolar power
-			}
-
-
-
-			//2024-4-29 leave power enable untouched
-			//if (!DCCpacket.trackPower) break;
-			//gpio->out_w1ts = enable_mask | dcc_maskInverse;
-			//gpio->out_w1tc = enable_maskInverse | dcc_mask;	
+				//concurrent writes to same w1tc register will fail, instead you must OR values
 #ifdef PIN_RAILCOM_SYNC
-			gpio->out_w1tc = dcc_sync;
-#endif  
+				gpio->out_w1tc = brake_mask | dcc_sync ; //dcc output is already low from prior state, now we just re-enable pipolar power
+#else
+				gpio->out_w1tc = brake_mask;
+#endif
+			}
 			break;
 			/*the delay gets executed and the block below sets next-state and queues up next databit*/
 		}
@@ -264,13 +263,12 @@ Note: using non PWM compat mode, the timebase is 200nS.
 			else
 			{//LMD 18200 device. The PWM pin is always high.  Taking brake high will ensure
 			//both output drivers have the same polarity as dictated by dir, i.e we don't care about dir
-				
 				gpio->out_w1ts = DCCpacket.trackPower ? 0 : brake_mask;  //power off, assert brake high
 				gpio->out_w1tc = DCCpacket.trackPower ? brake_mask : 0;  //power on, assert brake low
-
 			}
 
 
+			
 
 		}
 

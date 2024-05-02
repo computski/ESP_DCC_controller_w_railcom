@@ -300,7 +300,7 @@ void dccPacketEngine(void) {
 
 		//2021-10-14 enable/disable of track power is now controlled from DCClayer1
 		DCCpacket.trackPower = power.trackPower;
-		//2023-09-27 default is to disable railcom, and only enable on the IDLE packet
+		//2023-09-27 default is to disable railcom, and only enable on a loco speed packet
 		DCCpacket.doCutout = false;
 
 		
@@ -315,7 +315,7 @@ void dccPacketEngine(void) {
 				DCCpacket.data[1] = 0;
 				DCCpacket.data[2] = 0xFF;
 				DCCpacket.packetLen = 3;
-				DCCpacket.doCutout = true;
+				
 			}
 			else
 			{
@@ -398,23 +398,24 @@ void dccPacketEngine(void) {
 					DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
 				}
 				DCCpacket.packetLen++;
-				/*will exit with DCCpacket.packetLen set at correct length of i+1*/
+				//will exit with DCCpacket.packetLen set at correct length of i+1
 
+				DCCpacket.doCutout = true;
 
-			} /*end zero address test*/
+			} //end zero address test
 
-			  /*only advance locoIndex if we don't need to deal with nudge */
+			  //only advance locoIndex if we don't need to deal with nudge 
 			if (loco[m_locoIndex].nudge == 0) { m_locoIndex++; }
 			if (m_locoIndex >= MAX_LOCO) {
 				m_locoIndex = 0;
 			}
-			/*next up is function packet*/
+			//next up is function packet
 			dccSE = DCC_FUNCTION;
 			break;
 
 
 		case DCC_FUNCTION:
-			/*function packets are controlled by funcIndex and transmit at 1/3rd rate of loco*/
+			//function packets are controlled by funcIndex and transmit at 1/3rd rate of loco
 		{//block start
 			uint8_t fValue;
 			uint8_t fLoco = m_funcIndex / 3;
@@ -687,7 +688,6 @@ void dccPacketEngine(void) {
 				DCCpacket.data[1] = 0x00;
 				DCCpacket.data[2] = 0xFF;
 				DCCpacket.packetLen = 3;
-				DCCpacket.doCutout = true;
 				break;
 
 			case RD_START:
@@ -842,8 +842,6 @@ void dccPacketEngine(void) {
 			DCCpacket.data[1] = 0x00;
 			DCCpacket.data[2] = 0xFF;
 			DCCpacket.packetLen = 3;
-			//2023-09-24 assert railcom cutout on every idle packet
-			DCCpacket.doCutout = true;
 			break;
 
 
