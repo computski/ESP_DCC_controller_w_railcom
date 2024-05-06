@@ -57,8 +57,10 @@ bool    bLED;
 void setup() {
 	Serial.begin(115200);
 	Serial.println(F("\n\nBoot DCC ESP"));
-	trace(Serial.println(F("trace enabled"));)
-
+	trace(
+		Serial.println(F("trace enabled"));
+		_Pragma("GCC warning \" TRACE IS ENABLED\"")
+			)
 		//2021-10-19 the unit can operate in DCC mode, or in DC mode pwm which supports a single loco, loco 3 with 28 speed steps
 		//enable or disable the DC block as required in Global.h  DCC and DC are mutually exclusive
 

@@ -14,6 +14,9 @@ Note: using non PWM compat mode, the timebase is 200nS.
 CAUTION: you cannot write consecutively to w1ts or w1tc, as the second write seems to null the first.
 Instead you should OR the bits together e.g. gpio->w1ts = this | that
 //https://arduino.stackexchange.com/questions/44531/arduino-esp8266-direct-fast-control-of-the-digital-pins
+
+rtc_reg_write decprecated warning...TIMER_REG_WRITE
+https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 */
 
 #include <c_types.h>
@@ -145,7 +148,7 @@ Instead you should OR the bits together e.g. gpio->w1ts = this | that
 
 		switch (DCCperiod) {
 		case DCC_ZERO_H:
-			WRITE_PERI_REG(&timer->frc1_load, ticksZERO);
+			WRITE_PERI_REG(&timer->frc1_load, ticksZERO);  
 			gpio->out_w1ts = dcc_mask;  //set bits to logic 1
 			gpio->out_w1tc = dcc_maskInverse;  //set bits to logic 0
 			dccCount++;
@@ -168,7 +171,7 @@ Instead you should OR the bits together e.g. gpio->w1ts = this | that
 			break;
 		case DCC_CUTOUT_START:
 			WRITE_PERI_REG(&timer->frc1_load, ticksCutoutStart);
-			//this is a pseudo start to a new 1 bit, we go logic hi
+			//this is a pseudo start to a new 1 bit, we high akin to _H on the other bit types
 
 			if (brake_mask == 0) {
 				//L298 and BT2 devices
@@ -177,14 +180,16 @@ Instead you should OR the bits together e.g. gpio->w1ts = this | that
 			}
 			else 
 			{//LMD 18200 device
+				#ifdef PIN_RAILCOM_SYNC
+				//concurrent writes to w1ts register will fail, instead you must OR values
+				gpio->out_w1ts = dcc_sync | dcc_mask;
+				#else
 				gpio->out_w1ts = dcc_mask;  //set bits to logic 1
+				#endif  
 				//leave output enabled as bi-polar as normal
+		
 			}
 
-			
-	#ifdef PIN_RAILCOM_SYNC
-			gpio->out_w1ts = dcc_sync;
-	#endif  
 
 			//2024-4-28 MORE WORK to be done.  mask_brake !=0 then we are in LMD18200 mode 
 			//If no brake was set (i.e. brake_mask===0) then we are driving the h bridge through the dcc_mask pins and ignoring dcc_mask inverse
@@ -217,7 +222,6 @@ Instead you should OR the bits together e.g. gpio->w1ts = this | that
 		case DCC_CUTOUT_END:
 			WRITE_PERI_REG(&timer->frc1_load, ticksCutoutEnd);
 			//this is a pseudo end of a bit, assert a low-half of a bit
-			//you cannot re-write to same gpio register quickly as first instruction is not acted on.  instead, OR the commands together
 						
 			if (brake_mask == 0) {
 				//output a pseudo low part of bit
@@ -226,12 +230,12 @@ Instead you should OR the bits together e.g. gpio->w1ts = this | that
 			}
 			else
 			{//LMD 18200 device 
-				//concurrent writes to same w1tc register will fail, instead you must OR values
-#ifdef PIN_RAILCOM_SYNC
-				gpio->out_w1tc = brake_mask | dcc_sync ; //dcc output is already low from prior state, now we just re-enable pipolar power
-#else
-				gpio->out_w1tc = brake_mask;
-#endif
+				#ifdef PIN_RAILCOM_SYNC
+					//concurrent writes to same w1tc register will fail, instead you must OR values
+					gpio->out_w1tc = brake_mask | dcc_sync ; //dcc output is already low from prior state, now we just re-enable pipolar power
+				#else
+					gpio->out_w1tc = brake_mask;
+				#endif
 			}
 			break;
 			/*the delay gets executed and the block below sets next-state and queues up next databit*/
@@ -266,9 +270,6 @@ Instead you should OR the bits together e.g. gpio->w1ts = this | that
 				gpio->out_w1ts = DCCpacket.trackPower ? 0 : brake_mask;  //power off, assert brake high
 				gpio->out_w1tc = DCCpacket.trackPower ? brake_mask : 0;  //power on, assert brake low
 			}
-
-
-			
 
 		}
 
@@ -442,7 +443,7 @@ Instead you should OR the bits together e.g. gpio->w1ts = this | that
 
 		TM1_EDGE_INT_ENABLE();
 		ETS_FRC1_INTR_ENABLE();
-		RTC_REG_WRITE(FRC1_LOAD_ADDRESS, 0);  //This starts timer.  +++++++++ RTC_REG_WRITE is deprecated ++++++
+		TIMER_REG_WRITE(FRC1_LOAD_ADDRESS, 0);  //This starts timer.  +++++++++ RTC_REG_WRITE is deprecated ++++++
 		timer->frc1_ctrl = TIMER1_DIVIDE_BY_16 | TIMER1_ENABLE_TIMER;
 	}
 
@@ -491,7 +492,7 @@ Instead you should OR the bits together e.g. gpio->w1ts = this | that
 
 		TM1_EDGE_INT_ENABLE();
 		ETS_FRC1_INTR_ENABLE();
-		RTC_REG_WRITE(FRC1_LOAD_ADDRESS, 0);  //This starts timer.  +++++++++ RTC_REG_WRITE is deprecated ++++++
+		TIMER_REG_WRITE(FRC1_LOAD_ADDRESS, 0);  //This starts timer.  +++++++++ RTC_REG_WRITE is deprecated ++++++
 		timer->frc1_ctrl = TIMER1_DIVIDE_BY_16 | TIMER1_ENABLE_TIMER;
 
 		Serial.println("LMD18200");
@@ -727,7 +728,7 @@ Instead you should OR the bits together e.g. gpio->w1ts = this | that
 
 		TM1_EDGE_INT_ENABLE();
 		ETS_FRC1_INTR_ENABLE();
-		RTC_REG_WRITE(FRC1_LOAD_ADDRESS, 0);  //This starts timer  ++++ RTC_REG_WRITE is deprecated ++++
+		TIMER_REG_WRITE(FRC1_LOAD_ADDRESS, 0);  //This starts timer  ++++ RTC_REG_WRITE is deprecated ++++
 		timer->frc1_ctrl = TIMER1_DIVIDE_BY_16 | TIMER1_ENABLE_TIMER;
 }
 

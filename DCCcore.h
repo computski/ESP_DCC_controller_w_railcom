@@ -105,6 +105,7 @@ enum POMstate {
 	POM_BYTE_WRITE,
 	POM_BIT,
 	POM_BIT_WRITE,
+	POM_BYTE_READ
 };
 
 struct POM {

@@ -549,6 +549,41 @@ void dccPacketEngine(void) {
 					m_pom.state = POM_BYTE;
 				break;
 
+
+				case POM_BYTE_READ:  //2024-05-04
+					//set to repeat packet transmit 4 times
+					//S9.2.1 para 5.1.1 Read 1 Byte. addr [1 or 2] 1110CCVV 0 VVVVVVVV 0 00000000 [checksum] max 6 byte packet.
+					trace(Serial.println("pom_byte_read");)
+					m_pom.packetCount = 4;
+					if (false) {
+					//placeholder for accessory read
+					}
+					else if (m_pom.useLongAddr) {
+						/*long address format S9.2.1 para 60*/
+						DCCpacket.data[0] = m_pom.addr >> 8;
+						DCCpacket.data[0] |= 0b11000000;
+						DCCpacket.data[1] = m_pom.addr & 0x00FF;
+						i = 2;
+					}
+					else {
+						DCCpacket.data[0] = (m_pom.addr & 0x7F);
+						i = 1;
+					}
+					/*CV#1 is transmitted as zero*/
+					DCCpacket.data[i] = (m_pom.cvReg - 1) >> 8;
+					DCCpacket.data[i++] |= 0b11101100;  //byte write CC=11
+					DCCpacket.data[i++] = (m_pom.cvReg - 1) & 0xFF;
+					DCCpacket.data[i++] =0;  //send zero in place of a cv value
+					/*calc checksum and packet length. i points to checksum byte*/
+					DCCpacket.data[i] = 0;
+					for (DCCpacket.packetLen = 0;DCCpacket.packetLen < i;DCCpacket.packetLen++) {
+						DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
+					}
+					DCCpacket.packetLen++;
+					/*will exit with DCCpacket.packetLen set at correct length of i+1*/
+					m_pom.state = POM_BYTE;  //revert to transmitting packets, i.e. this packet gets sent
+				break;
+
 				case POM_BIT_WRITE:
 					m_pom.packetCount = 4;
 					if (m_pom.useLongAddr) {
@@ -586,7 +621,10 @@ void dccPacketEngine(void) {
 					m_pom.state = POM_BIT;
 					break;
 			}
-						
+				
+			//2024-05-06 send a cutout at end of POM packet
+			DCCpacket.doCutout = true;
+
 			break; //end POM case
 					
 
@@ -3026,6 +3064,7 @@ void replicateAcrossConsist(int8_t slot) {
 //returns true if POM initiated
 //the cv register value passed is +1 compared to actual value, e.g. reg 23 passed is 22 in the memory space
 //val is B23 S0 C2 where the instruction is byte, set, clear for bits
+//2024-05-04 add R23 to read register 23 for example
 bool writePOMcommand(const char *addr, uint16_t cv, const char *val) {
 		
 	if (addr == nullptr) return false;
@@ -3040,10 +3079,17 @@ bool writePOMcommand(const char *addr, uint16_t cv, const char *val) {
 	//POM processing code remaps 1 to 0 on the line.
 	m_pom.cvReg = cv;
 	
+
+
 	switch (val[0]){
 	case 'B':
 		m_pom.cvData = atoi(val + 1);
 		m_pom.state = POM_BYTE_WRITE;
+		break;
+
+	case 'R':  //2024-05-04
+		m_pom.cvData = atoi(val + 1);
+		m_pom.state = POM_BYTE_READ;
 		break;
 
 	case 'S':
