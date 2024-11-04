@@ -1,5 +1,6 @@
 // DCCweb.h
 //2024-04-25 updated to use LittleFS and ArduinoJson 7.0.4
+//2024-08-28 sendJson() made visible for railcom
 
 
 #ifndef _DCCWEB_h
@@ -28,11 +29,12 @@ namespace nsDCCweb {
 	void broadcastPower(void);
 	void broadcastReadResult(uint16_t cvReg, int16_t cvVal);
 	void broadcastChanges(void);
+	void sendJson(JsonObject& out);   //needs to be visible to railcom routines
+	void sendJson(JsonDocument out);
+
 
 	static void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length);
-	static void sendJson(JsonObject& out);
 	static void DCCwebWS(JsonDocument doc);
-	static void sendJson(JsonDocument out);
 	static bool changeToTurnout(uint8_t slot, uint16_t addr, const char* name);
 	static bool changeToTurnout(uint8_t slot, const char* addr, const char* name);
 	static bool changeToSlot(uint8_t slot, uint16_t address, bool useLong, bool use128, const char* name);

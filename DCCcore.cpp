@@ -1,8 +1,8 @@
+//DCCcore.cpp 
 // 
-// 2023-09-27 updated to support railcom cutout after every IDLE packet.  The spec is not clear, if a decoder is writen to via service mode, does it respond via railcom?
-// also if a decoder is written to via POM, does it respond via railcom?  POM does not require any idle packets to be sent.  So perhaps decoder waits for next IDLE it sees.
-// also the spec does not state that railcom cutouts exist only after IDLE packets, they could follow any packet.  I have only implemented during idles here.
-// 
+//2024-11-04 railcom cutout is sent after every DCC speed packet and after a POM packet (see DCCpacket.doCutout=true).  If a loco is writen to via POM, it can respond via Railcom
+//
+
 #include "Global.h"
 #include "DCCcore.h"
 #include "DCClayer1.h"
@@ -368,7 +368,7 @@ void dccPacketEngine(void) {
 					/*nudge code, will assert max speed in alternate directions until nudge=0*/
 					if (loco[m_locoIndex].nudge > 0) {
 						speedCode = 0x7F;
-						if (loco[m_locoIndex].nudge & 0x01 == 0x00) { speedCode ^= 0b10000000; }
+						if ((loco[m_locoIndex].nudge & 0x01) == 0x00) { speedCode ^= 0b10000000; }
 						loco[m_locoIndex].nudge--;
 					}
 					/*special case for eStop*/
@@ -383,7 +383,7 @@ void dccPacketEngine(void) {
 					/*nudge code, will assert max speed in alternate directions until nudge=0*/
 					if (loco[m_locoIndex].nudge > 0) {
 						speedCode = 0x1F;
-						if (loco[m_locoIndex].nudge & 0x01 == 0x00) { speedCode ^= 0b00100000; }
+						if ((loco[m_locoIndex].nudge & 0x01) == 0x00) { speedCode ^= 0b00100000; }
 						loco[m_locoIndex].nudge--;
 					}
 					/*special case for eStop, need to preserve direction*/
@@ -414,23 +414,28 @@ void dccPacketEngine(void) {
 			break;
 
 
+			//2024-11-04 a wierd bug on function group1.  7003 is a long address but we are transmitting only the >>8 part of this
+			//and withought |= 0b11000000
+			//and then 3 is being treated as a long address.
+
+
 		case DCC_FUNCTION:
 			//function packets are controlled by funcIndex and transmit at 1/3rd rate of loco
 		{//block start
-			uint8_t fValue;
-			uint8_t fLoco = m_funcIndex / 3;
+			uint8_t func_Value;
+			uint8_t func_LocoIndex = m_funcIndex / 3;
 
-			if (loco[fLoco].address != 0) {
+			if (loco[func_LocoIndex].address != 0) {
 				/*2019-10-08 support long address*/
-				if (loco[m_locoIndex].useLongAddress) {
+				if (loco[func_LocoIndex].useLongAddress) {   
 					/*long address format S9.2.1 para 60*/
-					DCCpacket.data[0] = loco[fLoco].address >> 8;
+					DCCpacket.data[0] = loco[func_LocoIndex].address >> 8;   //upper byte of address
 					DCCpacket.data[0] |= 0b11000000;
-					DCCpacket.data[1] = loco[fLoco].address & 0x00FF;
+					DCCpacket.data[1] = loco[func_LocoIndex].address & 0x00FF;   //lower byte of address
 					i = 2;
 				}
 				else {
-					DCCpacket.data[0] = (loco[fLoco].address & 0x7F);
+					DCCpacket.data[0] = (loco[func_LocoIndex].address & 0x7F);
 					i = 1;
 				}
 
@@ -439,23 +444,23 @@ void dccPacketEngine(void) {
 				switch (m_funcIndex % 3) {
 				case 1:
 					/*send a function group 2 packet S-9.2.1 para 270 101SDDDD*/
-					fValue = (loco[fLoco].function >> 5) & 0b1111;
-					fValue |= 0b10110000;
+					func_Value = (loco[func_LocoIndex].function >> 5) & 0b1111;
+					func_Value |= 0b10110000;
 					break;
 				case 2:
 					/*send a function group 3 packet S-9.2.1 para 270 101SDDDD*/
-					fValue = (loco[fLoco].function >> 9) & 0b1111;
-					fValue |= 0b10100000;
+					func_Value = (loco[func_LocoIndex].function >> 9) & 0b1111;
+					func_Value |= 0b10100000;
 					break;
 				default:
 					/*send a function group 1 packet S-9.2.1 para 260 100DDDDD*/
 					/*take 5 function bits and move bit 0 to bit 4*/
-					fValue = loco[fLoco].function & 0b11111;
-					if (fValue & 0x01) { fValue = fValue | 0b100000; }
-					fValue = fValue >> 1;
-					fValue |= 0b10000000;
+					func_Value = loco[func_LocoIndex].function & 0b11111;
+					if (func_Value & 0x01) { func_Value = func_Value | 0b100000; }
+					func_Value = func_Value >> 1;
+					func_Value |= 0b10000000;
 				}
-				DCCpacket.data[i] = fValue;
+				DCCpacket.data[i] = func_Value;
 				i++;
 
 				/*calc checksum and packet length. i points to checksum byte*/
@@ -499,7 +504,7 @@ void dccPacketEngine(void) {
 					m_pom.packetCount = 4;
 		//2020-06-17 add accessory support
 					if (m_pom.useAccessoryAddr) {
-						/*accessory address format S9.2.1 para ?  10AAAAAA 0 1AAACDDD, where CDDD=0000 is the only type
+						/*accessory address format S9.2.1 para 420  10AAAAAA 0 1AAACDDD, where CDDD=0000 is the only type
 						supported.  first byte is 6 lsb, second holds 3 msb but inverted.
 						Note that turnouts are grouped in 4 off a single base address.  i.e. addr 1-4 is a single controller
 						addr 5-9 maps to a second.  so if we set CV 7 on  addr 1-4, since we send CDDD=0000 it applies to the 
@@ -551,8 +556,13 @@ void dccPacketEngine(void) {
 
 
 				case POM_BYTE_READ:  //2024-05-04
+					//2024-11-02 this needs more work.  This is the extended packet address schema. You can write and also verify but that triggers a response through Railcom
 					//set to repeat packet transmit 4 times
-					//S9.2.1 para 5.1.1 Read 1 Byte. addr [1 or 2] 1110CCVV 0 VVVVVVVV 0 00000000 [checksum] max 6 byte packet.
+					//S9.2.1 para 375 Read 1 Byte. addr [1 or 2] 1110CCVV 0 VVVVVVVV 0 DDDDDDDD [checksum] max 6 byte packet.
+
+					//If railcom is enabled, the decoder can send "operations mode acknowledgment".  See para 495, which refers to S9.3.1(no longer exists) and S9.3.2.(railcom)
+					// except "operations mode acknowledgment" does not appear in that doc.  But see p19 of that doc, POM section, it does define an ACK packet.
+
 					trace(Serial.println("pom_byte_read");)
 					m_pom.packetCount = 4;
 					if (false) {
@@ -571,10 +581,10 @@ void dccPacketEngine(void) {
 					}
 					/*CV#1 is transmitted as zero*/
 					DCCpacket.data[i] = (m_pom.cvReg - 1) >> 8;
-					DCCpacket.data[i++] |= 0b11101100;  //byte write CC=11
+					DCCpacket.data[i++] |= 0b11101100;  //byte write CC=11, byte verify C=01
 					DCCpacket.data[i++] = (m_pom.cvReg - 1) & 0xFF;
-					DCCpacket.data[i++] =0;  //send zero in place of a cv value
-					/*calc checksum and packet length. i points to checksum byte*/
+					DCCpacket.data[i++] =0;  //send zero in place of a cv value.  2024-11-01 WHY?  the spec para 390 says we need to send the byte we wish to verify
+					/*calc checksum and packet le ngth. i points to checksum byte*/
 					DCCpacket.data[i] = 0;
 					for (DCCpacket.packetLen = 0;DCCpacket.packetLen < i;DCCpacket.packetLen++) {
 						DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];

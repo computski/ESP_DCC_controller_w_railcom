@@ -947,6 +947,8 @@ void nsDCCweb::broadcastPower(void) {
 	sendJson(out);
 }
 
+
+
 void nsDCCweb::setPower(bool powerOn) {
 	if (powerOn) {
 		/*turn on track power*/

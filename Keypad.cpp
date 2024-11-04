@@ -30,18 +30,13 @@
 
 //key holds the current valid key. key flag is raised on every press or repeat press if held
 
-#define KEY_REPEAT_PERIOD1    50  //.5 sec when called every 10mS
-#define KEY_REPEAT_PERIOD2    20  //.2 sec when called every 10mS
-#define KEY_REPEAT_LONG		  150 //1.5 sec long repeat for MODE	
-
-const char ASCIImapping[] = "D#0*C987B654A321";
-
 /*call keyScan every 10mS, we strobe the rows <3-0> and read the cols
  *we need 3 consistent reads before we declare a result, giving a response time of
  *approx 30mS
  *group1 contains rows 1,0 and group 2 contains rows 3,2 as the most and least significant nibbles of each
  *group result.
  */
+
 
 void keyScan(void)
 {
@@ -112,6 +107,11 @@ void keyScan(void)
 		/*if no key, keyPress will be zero because the value is decremented but contents of loop are not executed*/
 	} while (false);
 
+
+	/*2024-08-21 remap keyPress for special case key-pair groups for estop and mode */
+	if (keyPress == KEY_ESTOP_PAIR) keyPress = KEY_ESTOP;
+	if (keyPress == KEY_MODE_PAIR) keyPress = KEY_MODE;
+
 	keypad.resC = keypad.resB;
 	keypad.resB = keypad.resA;
 	keypad.resA = keyPress;
@@ -128,7 +128,7 @@ void keyScan(void)
 			keypad.keyHeld = false;
 			keypad.key = 0;
 			/*if a keyUp was requested, set flag, but we don't want to keep setting it so clear the request*/
-			if (keypad.requestKeyUp) { 
+			if (keypad.requestKeyUp) {
 				keypad.requestKeyUp = false;
 				keypad.keyFlag = true;
 			}
@@ -138,14 +138,14 @@ void keyScan(void)
 			if (keypad.key == keyPress)
 			{
 				/*key held but only declare after timeout clears*/
-				
+
 				if (keypad.keyTimer == 0)
 				{
 					keypad.keyHeld = true;
 					keypad.key = keyPress;
 					keypad.keyTimer = KEY_REPEAT_PERIOD2;
 					keypad.keyFlag = true;
-				}		
+				}
 			}
 			else
 			{
@@ -154,7 +154,7 @@ void keyScan(void)
 				keypad.keyFlag = true;
 				keypad.key = keyPress;
 				/*2019-11-18 special case for MODE key, has a long initial repeat period*/
-				if (keypad.key == 25) {
+				if (keypad.key == KEY_MODE) {
 					keypad.keyTimer = KEY_REPEAT_LONG;
 				}
 				else
@@ -173,6 +173,7 @@ void keyScan(void)
 		{
 			keypad.keyASCII = 0;
 		}
+			
 
 	}  //end debounce
 

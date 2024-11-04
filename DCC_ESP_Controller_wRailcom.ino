@@ -34,6 +34,7 @@
 
 
 
+
 #include <ArduinoJson.h>
 #include <ArduinoJson.hpp>
 #include <Wire.h>
@@ -42,7 +43,7 @@
 #include "DCClayer1.h"
 #include "DCCweb.h"
 #include "WiThrottle.h"
-
+#include "Railcom.h"
 
 
 //PIN ASSIGNMENTS - see global.h
@@ -97,6 +98,11 @@ DCCcoreBoot();
 	nsWiThrottle::startThrottle();
 #endif
 
+	/*2024-08-28 start railcom protocol*/
+#ifdef _RAILCOM_h
+	nsRailcom::railcomInit();    
+#endif
+
 
 } //end boot
 
@@ -131,6 +137,16 @@ void loop() {
 	DCCcore();
 
 
+	//2024-08-28 dump incoming railcom over websocket
+#ifdef _RAILCOM_h
+	nsRailcom::railcomLoop();
+#endif
+
+
+
+
+
+
 	if (quarterSecFlag) {
 		/*isQuarterSecFlag will return true and also clear the flag*/
 		quarterSecFlag = false;
@@ -151,6 +167,9 @@ void loop() {
 			nsDCCweb::broadcastPower();
 #endif
 
+
+
+
 #ifdef _JSONTHROTTLE_h
 			/*transmit power status to websocket*/
 			nsJsonThrottle::broadcastJsonPower();
@@ -161,7 +180,7 @@ void loop() {
 			//2020-11-28 no need to do this so frequently
 			//nsWiThrottle::broadcastWiPower();
 #endif
-		}
+		}//end one sec count
 
 
 	}//qtr sec

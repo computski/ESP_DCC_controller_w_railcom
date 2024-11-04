@@ -1,4 +1,6 @@
+
 // DCCcore.h
+//https://www.picotech.com/library/knowledge-bases/oscilloscopes/digital-command-control-dcc-protocol-decoding
 
 #ifndef _DCCCORE_h
 #define _DCCCORE_h

@@ -132,13 +132,14 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 	  a new packet.  If the DDCpacket is not modified by the main loop, this layer 1 handler will continuously transmit the same packet to line.  This is useful
 	  as it allows an idle to be continuously transmitted when we are in Service Mode for example.
 	
-	2023-08-30 modified to add a railcom cutout at end of packet.  it needs to know how to assert a short-circuit on the outputs and how to time this event
-	The NRMA is not clear on when the cutout is asserted, it suggests at the end of every packet
-	other specs I have seen state the cutout must be preceded by an idle packet, which implies only idle packets should have a cutout
-
+	2023-08-30 modified to add a railcom cutout at end of packet.  Set doCutout when passing the DCCpacket to the routine.
+	The NRMA spec calls for a cutout after every loco (and accessory) packet sent.  The exception is during service mode.
+	In theory a loco will recognise packets sent to it, and it will respond during the cutout.  This avoids all locos trying to assert on the same cutout.
+		
 	In theory, a cutout always starts after the 2nd half of a bit period and this is always a logic 0.  There is a transition to 'high' for Tcs
 	after which the cutout asserts.  The cutout ends with a logic 0 which is a psudeo end to an imaginary bit.  In any event the next bit start will be a logic 1.
 
+	The cutout start bit is asymetric, i.e. it has no complementary low-start bit of equal length.
 
 	*/
 

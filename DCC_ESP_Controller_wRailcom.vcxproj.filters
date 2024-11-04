@@ -28,10 +28,13 @@
     <ClCompile Include="JogWheel.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="WiThrottle.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="Keypad.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="WiThrottle.cpp">
+    <ClCompile Include="Railcom.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -57,10 +60,13 @@
     <ClInclude Include="JogWheel.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="WiThrottle.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="Keypad.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="WiThrottle.h">
+    <ClInclude Include="Railcom.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
