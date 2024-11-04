@@ -122,7 +122,7 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 
 
 
-	/*Interrupt handler ffor dcc
+	/*Interrupt handler for DCC
 	  for a dcc_zero or dcc_one the reload periods are different.  We queue up the next-bit in the second half of the bit currently being transmitted
 	  Some jitter is inevitable with maskable Ints, but it does not cause any problems with decooding in the locos at present.
 	  The handler will work its way through the TXbuffer transmitting each byte.  when it reaches the end, it sets the byte pointer to zero
@@ -510,11 +510,10 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 	//Maybe not.  Enable is intended to remove track power (go open or short cct).  Railcom instead asserts a short.
 	//so the RC cutout is not equivalent to not-enable, unless this is guaranteed to pull both rails to ground.  (i.e. open circuit is no good)
 	//for the L298 and IBT taking not-enable will result in an open circuit.
-	//Look at it another way.  there is no need to gate-enable if you have independent control of both sides of the H bridge.  This is true for the L298 and LMD but not the IBT2.
-	//The IBT2 has its 2 parts of the half bridge hard-wired as always the inverse with a 74 inverter.  i.e. it cannot do 'fast stop'
+	//Look at it another way.  there is no need to gate-enable if you have independent control of both sides of the H bridge.  This is true for the L298, LMD18200T and the IBT2.
 	//BUT you also wish to avoid dc spikes at power up.  Most of these bridges achieve this by disabling the outputs.  You could do this with an RC delay.
-	//So really, i could redesign the board to just do railcom for LMD and L298 devices.  if IBT is done at all, it won't support railcom
-
+	//but I have done this with careful selection of the drive pins.
+	
 
 #pragma region DC CONTROL
 	
