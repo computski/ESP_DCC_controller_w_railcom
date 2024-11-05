@@ -373,6 +373,8 @@ static void handleNewClient(void* arg, AsyncClient* client) {
 
 /*boot the WiThrottle system*/
 void nsWiThrottle::startThrottle(void) {
+	Serial.printf("Throttle start port  %d\n", bootController.tcpPort);
+
 	AsyncServer *server = new AsyncServer(bootController.tcpPort); // start listening on tcp port
 	server->onClient(&handleNewClient, server);
 	server->begin();
