@@ -556,12 +556,24 @@ void dccPacketEngine(void) {
 
 
 				case POM_BYTE_READ:  //2024-05-04
-					//2024-11-02 this needs more work.  This is the extended packet address schema. You can write and also verify but that triggers a response through Railcom
-					//set to repeat packet transmit 4 times
-					//S9.2.1 para 375 Read 1 Byte. addr [1 or 2] 1110CCVV 0 VVVVVVVV 0 DDDDDDDD [checksum] max 6 byte packet.
+					//2024-11-02 note, S9.2.1 para 375 only defines write bit/byte and verify bit/byte
+					//to read a byte we need to refer to S9.3.2 para 5.1.1 but actually the read 1 byte command is actually the byte verify command with data=0
+
+					//Byte read: addr [1 or 2]  111001VV 0 VVVVVVVV 0 00000000 [checksum] where V=cv
+					//Bit read 
+
 
 					//If railcom is enabled, the decoder can send "operations mode acknowledgment".  See para 495, which refers to S9.3.1(no longer exists) and S9.3.2.(railcom)
 					// except "operations mode acknowledgment" does not appear in that doc.  But see p19 of that doc, POM section, it does define an ACK packet.
+
+					/*findings. you must turn off auto discovery in cv28, as this randomly puts a series of 6 0x0F bytes in ch2.
+					you must turn off broadcast on ch1, because this puts random non 4-4 bytes on the rc cutout
+					you must turn on broadcast on ch2, and here you will see a 2 byte (12 bit) datagram which is the returned ID=0 and cv value
+					and the orientation of the loco seems to affect the ch1 garbage, however the ch2 stuff still reads correclty in either orientation
+					tests also prove that with all the other traffic for loco 6830, such as speed and func, it still responds to POM read correctly.
+					*/
+
+
 
 					trace(Serial.println("pom_byte_read");)
 					m_pom.packetCount = 4;
@@ -581,10 +593,10 @@ void dccPacketEngine(void) {
 					}
 					/*CV#1 is transmitted as zero*/
 					DCCpacket.data[i] = (m_pom.cvReg - 1) >> 8;
-					DCCpacket.data[i++] |= 0b11101100;  //byte write CC=11, byte verify C=01
+					DCCpacket.data[i++] |= 0b11100100;  //byte verify C=01
 					DCCpacket.data[i++] = (m_pom.cvReg - 1) & 0xFF;
-					DCCpacket.data[i++] =0;  //send zero in place of a cv value.  2024-11-01 WHY?  the spec para 390 says we need to send the byte we wish to verify
-					/*calc checksum and packet le ngth. i points to checksum byte*/
+					DCCpacket.data[i++] =0;  //send zero in place of a cv value.  This is per S9.3.2 though it contradicts S9.2.1 para 390
+					/*calc checksum and packet length. i points to checksum byte*/
 					DCCpacket.data[i] = 0;
 					for (DCCpacket.packetLen = 0;DCCpacket.packetLen < i;DCCpacket.packetLen++) {
 						DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
@@ -615,7 +627,7 @@ void dccPacketEngine(void) {
 					DCCpacket.data[i] = (m_pom.cvReg - 1) & 0xFF;
 					i++;
 					/*111CDBBB  C=1 for write, D is the bit value, BBB bit pos para 405*/
-					DCCpacket.data[i] = 0b11110000;
+					DCCpacket.data[i] = 0b11110000;  //would be 11100000 for bit verify
 					DCCpacket.data[i] |= (m_pom.cvBit & 0b111);
 					if (m_pom.cvBit >= 128) {
 						DCCpacket.data[i] |= 0b1000;

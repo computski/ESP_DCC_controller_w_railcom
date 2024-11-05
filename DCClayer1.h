@@ -20,19 +20,22 @@
 	struct DCCBUFFER {
 		uint8_t data[6];
 		uint8_t packetLen;
-		bool  clearToSend;
+		bool  clearToSend;  
 		bool  longPreamble;
-		bool  msTickFlag;
+		bool  msTickFlag; 
 		bool  trackPower;
 		bool  fastTickFlag;
 		bool  doCutout;
+		bool  railcomCutoutActive;  
 	};
 
 	/*2023-08-30 doCutout will add a railcom cutout at end of packet if true*/
+	/*2024-11-05 added railcomCutoutActive flag to signal back to main routine that the cutout is in progress*/
 
 	/*2021-11-25 fastTickFlag added, this runs at 1mS and is used for analog detection of ACK pulse in service mode*/
 
 	extern volatile DCCBUFFER DCCpacket;
+	
 
 	void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase, bool invertEnable);
 	void IRAM_ATTR dcc_init_LMD18200(uint32_t pin_pwm, uint32_t pin_dir, uint32_t pin_brake);

@@ -1,0 +1,11 @@
+GPIO16 D0 jog SW (pcb pull down)
+GPIO5  D1 Jog CK (pcb pull up)
+GPIO4  D2 Jog DT (pcb pull up)
+GPIO0  D3 SDA
+GPIO2  D4 SCL
+GPIO14 D5 IN2 IN4 LMD-DIR
+GPIO12 D6 IN1 IN3 
+GPIO13 D7 ENA+B LMD-PWM
+GPIO15 D8 to JP2 presumably eStop to gnd
+A0 goes to sense
+GPIO3 RX

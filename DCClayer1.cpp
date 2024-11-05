@@ -98,7 +98,6 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 
 	volatile DCCBUFFER DCCpacket;  //externally visible
 	volatile DCCBUFFER _TXbuffer;   //internal to this module
-
 	
 	static uint16_t dcc_mask = 0;
 	static uint16_t dcc_maskInverse = 0;
@@ -173,11 +172,19 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 		case DCC_CUTOUT_START:
 			WRITE_PERI_REG(&timer->frc1_load, ticksCutoutStart);
 			//this is a pseudo start to a new 1 bit, we high akin to _H on the other bit types
+			DCCpacket.railcomCutoutActive = true;
 
 			if (brake_mask == 0) {
 				//L298 and BT2 devices
+				#ifdef PIN_RAILCOM_SYNC
+				//concurrent writes to w1ts register will fail, instead you must OR values
+				gpio->out_w1ts = dcc_sync | dcc_mask;
+				#else
 				gpio->out_w1ts = dcc_mask;  //set bits to logic 1
+				#endif  
+				
 				gpio->out_w1tc = dcc_maskInverse;  //set bits to logic 0
+
 			}
 			else 
 			{//LMD 18200 device
@@ -223,11 +230,20 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 		case DCC_CUTOUT_END:
 			WRITE_PERI_REG(&timer->frc1_load, ticksCutoutEnd);
 			//this is a pseudo end of a bit, assert a low-half of a bit
-						
+			DCCpacket.railcomCutoutActive = false;
+
 			if (brake_mask == 0) {
 				//output a pseudo low part of bit
-				gpio->out_w1ts = dcc_maskInverse;
+		#ifdef PIN_RAILCOM_SYNC
+		//concurrent writes to same w1tc register will fail, instead you must OR values
+				gpio->out_w1tc = dcc_mask | dcc_sync;
+			#else
 				gpio->out_w1tc = dcc_mask;
+
+			#endif
+
+				gpio->out_w1ts = dcc_maskInverse;
+				
 			}
 			else
 			{//LMD 18200 device 
@@ -430,7 +446,7 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 		//2024-04-28 Special debug for railcom, make this sync pin an output
 		pinMode(PIN_RAILCOM_SYNC, OUTPUT);
 		digitalWrite(PIN_RAILCOM_SYNC, HIGH);
-		Serial.println("pin railcom");
+		Serial.println(F("railcom sync"));
 		dcc_sync |= (1 << PIN_RAILCOM_SYNC);
 #endif
 
@@ -450,15 +466,16 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 
 
 	/// <summary>
-	/// Overload for LMD18200 device
+	/// Initialise LMD18200 device. call once.
 	/// </summary>
 	/// <param name="pin_pwm">GPIO pin that supports dcc signal</param>
 	/// <param name="pin_enable">GPIO pin that enables the output</param>
-	/// <param name="pin_brake"></param>
+	/// <param name="pin_brake">GPIO pin that controls brake signal</param>
 	void IRAM_ATTR dcc_init_LMD18200(uint32_t pin_pwm, uint32_t pin_dir, uint32_t pin_brake)
 	{
 		//with the LMD18200 PWM is always held high.  We control dcc with the dir pin and assert power with the brake pin
 		//enable_mask is unused, brake_mask is
+		Serial.println(F("LMD18200"));
 		pinMode(pin_pwm, OUTPUT);
 		digitalWrite(pin_pwm, HIGH);  // keep pin permanently high, i.e. we can tie high with a jumper and save port
 
@@ -479,7 +496,7 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 		//2024-04-28 Special debug for railcom, make this sync pin an output
 		pinMode(PIN_RAILCOM_SYNC, OUTPUT);
 		digitalWrite(PIN_RAILCOM_SYNC, HIGH);
-		Serial.println("pin railcom");
+		Serial.println(F("railcom sync"));
 		dcc_sync |= (1 << PIN_RAILCOM_SYNC);
 #endif
 
@@ -496,7 +513,6 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 		TIMER_REG_WRITE(FRC1_LOAD_ADDRESS, 0);  //This starts timer.  +++++++++ RTC_REG_WRITE is deprecated ++++++
 		timer->frc1_ctrl = TIMER1_DIVIDE_BY_16 | TIMER1_ENABLE_TIMER;
 
-		Serial.println("LMD18200");
 	}
 
 
