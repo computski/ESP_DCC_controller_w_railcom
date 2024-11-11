@@ -173,7 +173,7 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 			WRITE_PERI_REG(&timer->frc1_load, ticksCutoutStart);
 			//this is a pseudo start to a new 1 bit, we high akin to _H on the other bit types
 			DCCpacket.railcomCutoutActive = true;
-
+			
 			if (brake_mask == 0) {
 				//L298 and BT2 devices
 				#ifdef PIN_RAILCOM_SYNC
@@ -381,6 +381,9 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 				{//reached end of packet, trigger a long preamble as the default
 					TXbitCount = 33;  //will be 32 on exit
 				}
+
+				//2024-11-8 every complete packet transmission clocks down the railcomPacketCount
+				DCCpacket.railcomPacketCount -= DCCpacket.railcomPacketCount > 0 ? 1 : 0;
 				break;
 
 			default:

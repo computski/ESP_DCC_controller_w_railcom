@@ -26,7 +26,8 @@
 		bool  trackPower;
 		bool  fastTickFlag;
 		bool  doCutout;
-		bool  railcomCutoutActive;  
+		bool  railcomCutoutActive;
+		uint8_t railcomPacketCount;
 	};
 
 	/*2023-08-30 doCutout will add a railcom cutout at end of packet if true*/

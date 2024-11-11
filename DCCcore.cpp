@@ -7,6 +7,7 @@
 #include "DCCcore.h"
 #include "DCClayer1.h"
 #include "DCCweb.h"
+#include "Railcom.h"
 
 #include <LiquidCrystal_I2C.h>   //Github mlinares1998/NewLiquidCrystal
 //https://github.com/mlinares1998/NewLiquidCrystal
@@ -567,7 +568,7 @@ void dccPacketEngine(void) {
 					// except "operations mode acknowledgment" does not appear in that doc.  But see p19 of that doc, POM section, it does define an ACK packet.
 
 					/*findings. you must turn off auto discovery in cv28, as this randomly puts a series of 6 0x0F bytes in ch2.
-					you must turn off broadcast on ch1, because this puts random non 4-4 bytes on the rc cutout
+					you must turn off broadcast on ch1, because this puts random non 4-8 bytes on the rc cutout
 					you must turn on broadcast on ch2, and here you will see a 2 byte (12 bit) datagram which is the returned ID=0 and cv value
 					and the orientation of the loco seems to affect the ch1 garbage, however the ch2 stuff still reads correclty in either orientation
 					tests also prove that with all the other traffic for loco 6830, such as speed and func, it still responds to POM read correctly.
@@ -586,6 +587,9 @@ void dccPacketEngine(void) {
 						DCCpacket.data[0] |= 0b11000000;
 						DCCpacket.data[1] = m_pom.addr & 0x00FF;
 						i = 2;
+
+						
+
 					}
 					else {
 						DCCpacket.data[0] = (m_pom.addr & 0x7F);
@@ -604,6 +608,12 @@ void dccPacketEngine(void) {
 					DCCpacket.packetLen++;
 					/*will exit with DCCpacket.packetLen set at correct length of i+1*/
 					m_pom.state = POM_BYTE;  //revert to transmitting packets, i.e. this packet gets sent
+
+					
+#ifdef _RAILCOM_h
+					nsRailcom::readRailcom(m_pom.addr,m_pom.useLongAddr);
+					//m_pom.timeout
+#endif
 				break;
 
 				case POM_BIT_WRITE:
