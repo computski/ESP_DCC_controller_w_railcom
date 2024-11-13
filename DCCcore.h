@@ -19,11 +19,12 @@
 #include <EEPROM.h>
 
 
+
 /*version control and capture of some system defaults for new compilations*/
 /*note, code at present does not support logging onto a network as a station*/
 struct CONTROLLER
 {
-	long	softwareVersion = 20240426;  //yyyymmdd captured as an integer
+	long	softwareVersion = 20241111;  //yyyymmdd captured as an integer
 	uint16_t	currentLimit = 1000;
 	uint8_t	voltageLimit = 15;
 	char SSID[21] = "DCC_ESP";
@@ -107,20 +108,23 @@ enum POMstate {
 	POM_BYTE_WRITE,
 	POM_BIT,
 	POM_BIT_WRITE,
-	POM_BYTE_READ
+	POM_BYTE_READ,
+	POM_BIT_READ
 };
 
 struct POM {
 	uint16_t addr = 3;
 	bool    useLongAddr;
 	bool	useAccessoryAddr;  //added 2020-06-17
+	bool bitManipulation;  //added 2024-11-11
 	uint16_t cvReg = 29;
 	uint8_t  cvData = 128;
 	uint8_t	 cvBit = 0; //<7> is the bit value, <0-2> the bit pos
 	uint8_t digitPos;
 	uint8_t	state = POM_BYTE;
-	uint8_t timeout = 0;
+	uint8_t timeout = 0;   //used in hardware UI
 	uint8_t packetCount;
+	
 } static m_pom;
 
 
@@ -210,7 +214,7 @@ void updateLocalMachine(void);
 void dccGetSettings();
 void replicateAcrossConsist(int8_t slot);
 void dccPutSettings();
-bool writePOMcommand(const char *addr, uint16_t cv, const char *val);
+bool writePOMcommand(const char* addr, uint16_t cv, const char* val, const char* action);
 bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool verify, bool enterSM, bool exitSM);
 float getVolt();  //debug
 

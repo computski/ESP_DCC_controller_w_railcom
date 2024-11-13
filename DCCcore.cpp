@@ -6,8 +6,8 @@
 #include "Global.h"
 #include "DCCcore.h"
 #include "DCClayer1.h"
-#include "DCCweb.h"
 #include "Railcom.h"
+//#include "DCCweb.h"  //debug just for json messages
 
 #include <LiquidCrystal_I2C.h>   //Github mlinares1998/NewLiquidCrystal
 //https://github.com/mlinares1998/NewLiquidCrystal
@@ -576,7 +576,6 @@ void dccPacketEngine(void) {
 
 
 
-					trace(Serial.println("pom_byte_read");)
 					m_pom.packetCount = 4;
 					if (false) {
 					//placeholder for accessory read
@@ -587,10 +586,7 @@ void dccPacketEngine(void) {
 						DCCpacket.data[0] |= 0b11000000;
 						DCCpacket.data[1] = m_pom.addr & 0x00FF;
 						i = 2;
-
-						
-
-					}
+						}
 					else {
 						DCCpacket.data[0] = (m_pom.addr & 0x7F);
 						i = 1;
@@ -611,10 +607,58 @@ void dccPacketEngine(void) {
 
 					
 #ifdef _RAILCOM_h
-					nsRailcom::readRailcom(m_pom.addr,m_pom.useLongAddr);
-					//m_pom.timeout
+					nsRailcom::readRailcom(m_pom.addr,m_pom.useLongAddr, m_pom.cvReg);
 #endif
 				break;
+
+
+				case POM_BIT_READ:
+					//2024-11-02 note, S9.2.1 para 375 only defines write bit/byte and verify bit/byte
+					//to read a byte we need to refer to S9.3.2 para 5.1.1 but actually the read 1 byte command is actually the byte verify command with data=0
+
+					//Bit manipulation: addr [1 or 2]  111010VV 0 VVVVVVVV 0 DDDDDDDD [checksum] where V=cv
+					//Bit read DDDDDDDD is 11100BBB   where the second 0 is an attempt to verify zero. I assume, like byte read that verifying a zero will generate the 
+					//actual bit setting
+
+
+					m_pom.packetCount = 4;
+					if (false) {
+						//placeholder for accessory read
+					}
+					else if (m_pom.useLongAddr) {
+						/*long address format S9.2.1 para 60*/
+						DCCpacket.data[0] = m_pom.addr >> 8;
+						DCCpacket.data[i] |= 0b11101000;  //bit manipulation CC=10
+
+						
+						DCCpacket.data[1] = m_pom.addr & 0x00FF;
+						i = 2;
+
+					}
+					else {
+						DCCpacket.data[0] = (m_pom.addr & 0x7F);
+						i = 1;
+					}
+					/*CV#1 is transmitted as zero*/
+					DCCpacket.data[i] = (m_pom.cvReg - 1) >> 8;
+					DCCpacket.data[i++] |= 0b11101000;  //bit manipulation CC=10
+					DCCpacket.data[i++] = (m_pom.cvReg - 1) & 0xFF;
+					/*111CDBBB  C=0 for verify, D is the bit value (use 0), BBB bit pos para 405*/
+					DCCpacket.data[i] = 0b11100000;  //for bit verify
+					DCCpacket.data[i++] |= (m_pom.cvBit & 0b111);
+					/*calc checksum and packet length. i points to checksum byte*/
+					DCCpacket.data[i] = 0;
+					for (DCCpacket.packetLen = 0; DCCpacket.packetLen < i; DCCpacket.packetLen++) {
+						DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
+					}
+					DCCpacket.packetLen++;
+					/*will exit with DCCpacket.packetLen set at correct length of i+1*/
+					m_pom.state = POM_BIT;
+
+#ifdef _RAILCOM_h
+					nsRailcom::readRailcom(m_pom.addr, m_pom.useLongAddr, m_pom.cvReg);
+#endif
+					break;
 
 				case POM_BIT_WRITE:
 					m_pom.packetCount = 4;
@@ -632,14 +676,13 @@ void dccPacketEngine(void) {
 					}
 					/*CV#1 is transmitted as zero*/
 					DCCpacket.data[i] = (m_pom.cvReg - 1) >> 8;
-					DCCpacket.data[i] |= 0b11101000;  //bit manipulation CC=10
-					i++;
-					DCCpacket.data[i] = (m_pom.cvReg - 1) & 0xFF;
-					i++;
+					DCCpacket.data[i++] |= 0b11101000;  //bit manipulation CC=10
+					DCCpacket.data[i++] = (m_pom.cvReg - 1) & 0xFF;
 					/*111CDBBB  C=1 for write, D is the bit value, BBB bit pos para 405*/
 					DCCpacket.data[i] = 0b11110000;  //would be 11100000 for bit verify
 					DCCpacket.data[i] |= (m_pom.cvBit & 0b111);
 					if (m_pom.cvBit >= 128) {
+						//assert the desired bit value
 						DCCpacket.data[i] |= 0b1000;
 					}
 					i++;
@@ -3097,44 +3140,58 @@ void replicateAcrossConsist(int8_t slot) {
 //the cv register value passed is +1 compared to actual value, e.g. reg 23 passed is 22 in the memory space
 //val is B23 S0 C2 where the instruction is byte, set, clear for bits
 //2024-05-04 add R23 to read register 23 for example
-bool writePOMcommand(const char *addr, uint16_t cv, const char *val) {
-		
+
+
+
+
+
+/// <summary>
+/// 2024-11-13 update, feed with incoming websocket values to initiate a POM action
+/// </summary>
+/// <param name="addr">L8888 or S3 for example</param>
+/// <param name="cv">cv numeric</param>
+/// <param name="val">val numeric for bytes or S5,C3 etc for bits</param>
+/// <param name="action">byteR,byteW,bitW</param>
+/// <returns>true if command initiated</returns>
+bool writePOMcommand(const char *addr, uint16_t cv, const char *val, const char *action) {
+	
+	if (action == nullptr) return false;
 	if (addr == nullptr) return false;
 	if (val == nullptr) return false;
-
+	
+	//BUG if you change cvReg on the same loco, byteR returns the old value of last cvReg  on the first read, then the actual cvReg requested on second.  why?
+	
 	m_pom.useLongAddr = addr[0] == 'L' ? true : false;
 	m_pom.addr = atoi(addr + 1);
 	if (m_pom.addr == 0) return false;
 
-
 	if (cv == 0 || cv > 1024) return false;
 	//POM processing code remaps 1 to 0 on the line.
 	m_pom.cvReg = cv;
-	
 
-
-	switch (val[0]){
-	case 'B':
-		m_pom.cvData = atoi(val + 1);
+	//what action to take
+	if (strcmp(action, "byteW") == 0) {
+		m_pom.cvData = atoi(val);
 		m_pom.state = POM_BYTE_WRITE;
-		break;
-
-	case 'R':  //2024-05-04
-		m_pom.cvData = atoi(val + 1);
+	}
+	else if(strcmp(action, "byteR") == 0) {
+		m_pom.cvData = 0;
 		m_pom.state = POM_BYTE_READ;
-		break;
-
-	case 'S':
-	case 'C':
-		//bit write. cvBit <2-0> represent the bit posn, <7> represents set or clear
-		//the val string will be b21 where b<7-0><1|0>
+		}
+	else if (strcmp(action, "bitW") == 0) {
+		//cvVal has a S|C prefix e.g. S3, C4
 		m_pom.cvBit = (val[1] - '0') & 0b111;
 		m_pom.cvBit += val[0] == 'S' ? 0b10000000 : 0;
 		m_pom.state = POM_BIT_WRITE;
-
 	}
+	else {
+		return false;
+	}
+
+
 	//initiate write sequence
 	dccSE = DCC_POM;  
+
 	//we do not set m_pom.timeout as we don't want to update local display for this remote operation
 	//m_pom.timeout = 8;
 	return true;

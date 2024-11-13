@@ -765,6 +765,26 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 		//note to change a long address, send CV17 then CV18. It appears most decoders won't change either until both
 		//are received in sequence
 		//pom = { "type": "dccUI", "cmd": "pom", "action": "byte", "addr":"S3", "cvReg": 0, "cvVal": "B23" };
+		//actions are byteR, byteW, bitW  cvVal will be pure numeric or ??? if read fails. action ok indicates it was received at controller and will be actioned
+		//
+
+		writePOMcommand(doc["addr"], doc["cvReg"], doc["cvVal"], doc["action"]);
+
+		//2024-11-13 
+		JsonDocument out;
+		out["type"] = "dccUI";
+		out["cmd"] = "pom";
+		out["action"] = "ok";
+		//out["success"]= writePOMcommand(doc["addr"], doc["cvReg"], doc["cvVal"], doc["action"]);
+		sendJson(out);
+
+		//calling writePOM like this causes the messages to go out of sequence.  you'd need to store the writePOM result in a var above
+
+
+		//{"type":"dccUI","cmd":"pom","action":"byteR","success":false,"addr":"S3","cvReg":"1","cvVal":0}
+
+
+		/*
 		const char* action = doc["action"];
 		const char* addr = doc["addr"];
 		uint16_t cv_reg = doc["cvReg"];
@@ -776,13 +796,14 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 		if (cv_val == nullptr) return;
 
 		//the required action is evident in cv_val without need to look at root.action
-		writePOMcommand(addr, cv_reg, cv_val);
+		writePOMcommand(addr, cv_reg, cv_val, action);
 
 		JsonDocument out;
 		out["type"] = "dccUI";
 		out["cmd"] = "pom";
 		out["action"] = "ok";
 		sendJson(out);
+		*/
 	}
 
 
