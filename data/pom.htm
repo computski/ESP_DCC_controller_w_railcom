@@ -1,7 +1,7 @@
 ﻿<html xmlns="http://www.w3.org/1999/xhtml">
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!--2024-05-04 updated for read-->
+    <!--2021-01-06-->
     <!--galaxy S9 viewport size is 360 x 740 PX -->
     <!--galaxy S5 viewport size is 360 x 640 PX -->
     <!--https://css-tricks.com/snippets/css/a-guide-to-flexbox/-->
@@ -74,8 +74,8 @@
     </style>
 
     <script type="text/javascript">
-        var wsUri = "wss://echo.websocket.org/";
-        //var wsUri = "ws://192.168.6.1:12080/";
+        //var wsUri = "wss://echo.websocket.org/";
+        var wsUri = "ws://192.168.6.1:12080/";
 
 
 
@@ -230,7 +230,6 @@
         function repaintUI() {
             try {
                 var myObj = JSON.parse(debug.innerHTML);
-                if (console) console.log(debug.innerHTML);
                 if (!myObj.type) {
                     return;
                 }
@@ -260,7 +259,7 @@
                     }
                 }
 
-                //if the decoder supports Railcom, there is a return value
+                //there is no incoming pom json as the command is one way
                 if (myObj.cmd == "pom") {
                     pom = myObj;
                     if (pom.action == "ok") {
@@ -268,37 +267,23 @@
                         //set a timerto clear msg in 2 sec
                         window.setTimeout(function () { msg.innerHTML = "&nbsp;"; }, 3000);
 
-                        //2024-11-13 return value as byte
-                    } else if (pom.action == "byteQ") {
-                        cvVal.value = pom.cvVal;
                     }
 
                 }
+
+                if (myObj.cmd == "railcom") {
+                    //incoming railcom payload 
+                    cvVal.value = myObj.payload;
+                    msg.innerHTML = "";
+                }
+
             }
+
             catch (e) {
                 if (console) console.log(e.message);
-
-
+                
 
             }
-
-
-            /*
-		//2020-11-11 handle bit return values
-		if (pom.cvVal.charAt(0)=='Q'){
-		switch (pom.cvVal.charAt(1)){
-			case 'S':
-			selBit.value= "set";
-			break;
-			case 'C':
-			selBit.value= "clear";
-			break;
-			default:
-			selBit.value= "???";
-		    }
-        }
-      
-		*/
         }
 
         function writeByte() {
@@ -320,35 +305,37 @@
                 return;
             }
 
-            pom.cvVal = cvVal.value;
-            pom.action = "byteW";
+            pom.cvVal = "B" + cvVal.value;
+            pom.action = "byte";
             var myJSON = JSON.stringify(pom);
             debug.innerHTML = myJSON;
             websocket.send(myJSON);
-            if (console) console.log(myJSON);
             msg.innerHTML = "sending pom..."
-	    
         }
 
-
         function readByte() {
-            if (console) console.log("read byte");
+            //write CV byte
             msg.innerHTML = "&nbsp;";
-            cvVal.value = 0;  //need this or validate will fail
             if (!doValidate()) return;
+
             var a = selSL.value == "short" ? "S" : "L";
             a = a + addr.value;
             pom.addr = a;
+
             pom.cvReg = cvReg.value;
-            pom.cvVal = cvVal.value;  //surely 0 would work too
-            pom.action = "byteR";
+
+             //clear existing cvVal        
+            cvVal.value = "";
+          
+
+            pom.cvVal = "R" + cvVal.value;
+            pom.action = "byte";
             var myJSON = JSON.stringify(pom);
             debug.innerHTML = myJSON;
             websocket.send(myJSON);
             msg.innerHTML = "reading pom..."
-            if (console) console.log(myJSON);
-            cvVal.value = "";
         }
+
 
 
 
@@ -360,9 +347,9 @@
             a = a + addr.value;
             pom.addr = a;
             pom.cvReg = cvReg.value;
-            pom.action = "bitW";
+            pom.cvVal = "";
+            pom.action = "bit";
 
-            //2024-11-11 writing a ??? value is same as clear
             var b = selBit.value == "set" ? "S" : "C";
             b = b + cvBit.value;
             pom.cvVal = b;
@@ -375,27 +362,9 @@
 
 
 
-       function readBit() {
-           //2024-11-11
-        //we actually read byte and then infer the result
-           msg.innerHTML = "&nbsp;";
-            if (!doValidate()) return;
 
-             var a = selSL.value == "short" ? "S" : "L";
-            a = a + addr.value;
-            pom.addr = a;
-            pom.cvReg = cvReg.value;
-            pom.cvVal = 0;
-            pom.action = "byteR";
 
-	    pom.cvVal = "Q" + cvBit.value;
-	    var myJSON = JSON.stringify(pom);
-            debug.innerHTML = myJSON;
-            websocket.send(myJSON);
-           msg.innerHTML = "sending pom..."
-           if (console) console.log("read bit");
 
-}
 
 
 
@@ -454,69 +423,71 @@
     <div class="outer" >
     <p><b>DCC ESP POM Mode</b></p>
 
-        <table border="0" style="width:100%">
-            <tr>
-                <td style="width:40%"> Status</td>
-                <td id="msg"> &nbsp;</td>
-            </tr>
-            <tr>
-                <td> mA</td>
-                <td id="displaymA"> </td>
-            </tr>
-            <tr>
-                <td> Volts</td>
-                <td id="displayV"> </td>
-            </tr>
-            <tr> <td> Track power is</td> <td> <input type="button" id="btnPwr" value="ON" onclick="setTrack()" autofocus /> </td> </tr>
+    <table border="0" style="width:100%">
+        <tr>
+            <td style="width:40%"> Status</td>
+            <td id="msg"> &nbsp;</td>
+        </tr>
+        <tr>
+            <td> mA</td>
+            <td id="displaymA"> </td>
+        </tr>
+        <tr>
+            <td> Volts</td>
+            <td id="displayV"> </td>
+        </tr>
+        <tr> <td> Track power is</td> <td> <input type="button" id="btnPwr" value="ON" onclick="setTrack()" autofocus /> </td> </tr>
 
-            <tr> <td style="padding-top:2vw;"> Set CV (POM)</td> </tr>
-            <tr>
-                <td>Loco addr</td>
-                <td><input id="addr" type="text" /><select id="selSL"><option>short</option><option>long</option></select></td>
-            </tr>
-
-
-            <tr>
-
-                <td> CV register</td>
-                <td> <input id="cvReg" type="text"> </td>
-            </tr>
-            <tr>
-                <td> Byte write</td>
-                <td> Bit write </td>
-            </tr>
-            <tr>
-                <td><input id="cvVal" type="text"></td>
-                <td><select id="cvBit">
-    <option>0</option>
-    <option>1</option>
-    <option>2</option>
-    <option>3</option>
-    <option>4</option>
-    <option>5</option>
-    <option>6</option>
-    <option>7</option>
-  
-</select>
-                    <select id="selBit"><option>set</option><option>clear</option><option>???</option></select>
-                      
-                   
-                </td>
-               
-            </tr>
+        <tr> <td style="padding-top:2vw;"> Set CV (POM)</td> </tr>
+        <tr>
+            <td>Loco addr</td>
+            <td><input id="addr" type="text" /><select id="selSL"><option>short</option><option>long</option></select></td>
+        </tr>
 
 
+        <tr>
 
-            <tr>
-                <td><input type="button" id="btnByte" value="BYTE WRITE" onclick="writeByte()"></td>
-                <td> <input type="button" id="btnBit" value="BIT WRITE" onclick="writeBit()"> </td>
-            </tr>
-          <tr>
-                <td><input type="button" id="btnByteRead" value="BYTE READ" onclick="readByte()"></td>
-                <td> <input type="button" id="btnBitRead" value="BIT READ" onclick="readBit()"> </td>
-            </tr>
-            <tr><td colspan="2"> <span id="debug" style="visibility:visible; font-size:2vmin"> </span></td></tr>
-        </table>
+            <td> CV register</td>
+            <td> <input id="cvReg" type="text"> </td>
+        </tr>
+        <tr>
+            <td> Byte write</td>
+            <td> Bit write </td>
+        </tr>
+        <tr>
+            <td><input id="cvVal" type="text"></td>
+            <td>
+                <select id="cvBit">
+                    <option>0</option>
+                    <option>1</option>
+                    <option>2</option>
+                    <option>3</option>
+                    <option>4</option>
+                    <option>5</option>
+                    <option>6</option>
+                    <option>7</option>
+
+                </select>
+                <select id="selBit"><option>set</option><option>clear</option></select>
+
+
+            </td>
+
+        </tr>
+
+
+
+        <tr>
+            <td><input type="button" id="btnByte" value="BYTE WRITE" onclick="writeByte()"></td>
+            <td> <input type="button" id="btnBit" value="BIT WRITE" onclick="writeBit()"> </td>
+        </tr>
+        <tr>
+            <td><input type="button" id="btnReadByte" value="BYTE READ" onclick="readByte()"></td>
+            <td> <input type="button" id="btnReadBit" value="BIT READ" onclick="readBit()"> </td>
+        </tr>
+
+        <tr><td colspan="2"> <span id="debug" style="visibility:visible; font-size:2vmin"> </span></td></tr>
+    </table>
        
     <br />
     <br />
