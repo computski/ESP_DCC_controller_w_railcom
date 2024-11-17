@@ -1,5 +1,9 @@
+// 
+// 
+// 
 #include "Global.h"
 #include "Railcom.h"
+//dependencies
 #include "DCCweb.h"
 #include "DCClayer1.h"
 
@@ -21,16 +25,48 @@
 * we timeout after 80 packets, this is approx 0.5s
 *
 * 
-* 2024-11-14 serious bug.  you read a cv and railcom gives you the result for the prior cv read.  why?
-* start shows the correct input values, and actual request to m_POM sets up correct cvReg but then seems to read back a prior value as if this were buffered somewhere
-* which it is not.  the websock sniffer shows the wrong value being returned.  This is presumably what's on the rails so the decoder is responding with a prior value???
+* it appears we read the cv twice, possibly because we send 4 dcc-read-pom commands so normally you'd initiate read, expect a value, return that over a WS but 
+* there might be a second repeat value come over, and you want to decode it, but also ignore it.... or is it sufficient to just enable 'look for id0?'
+* we seem to have fixed the weird problem i saw before where reading a new cv generates the value of the prior cv read.
 * 
-* 
+* Bugs 2024-11-17.  cannot read cv5. we see ok over WS, but then nothing, no timeout, no WS messages.  on the line we can see the decder responds with
+* AAAC which is valid, but still we see no response.  expected value is 64d
+* I found that if I reversed the track polarity, I can reliably read cv5.   This is confusing because I could see it on the PicoScope but perhaps its just enough
+* out of spec that the system cannot read it.  But this does not explain why it hangs and never sends a WS response.
 * 
 */
 
+
+
+
 using namespace nsRailcom;
 
+const uint8_t decode[] = {
+0b10101100,0b10101010,0b10101001,0b10100101,0b10100011,0b10100110,0b10011100,0b10011010,0b10011001,0b10010101,0b10010011,0b10010110,0b10001110,0b10001101,0b10001011,0b10110001,
+0b10110010,0b10110100,0b10111000,0b01110100,0b01110010,0b01101100,0b01101010,0b01101001,0b01100101,0b01100011,0b01100110,0b01011100,0b01011010,0b01011001,0b01010101,0b01010011,
+0b01010110,0b01001110,0b01001101,0b01001011,0b01000111,0b01110001,0b11101000,0b11100100,0b11100010,0b11010001,0b11001001,0b11000101,0b11011000,0b11010100,0b11010010,0b11001010,
+0b11000110,0b11001100,0b01111000,0b00010111,0b00011011,0b00011101,0b00011110,0b00101110,0b00110110,0b00111010,0b00100111,0b00101011,0b00101101,0b00110101,0b00111001,0b00110011,
+0b00001111,0b11110000,0b11100001 };
+#define RC_NACK 0x40
+#define RC_ACK 0x41
+#define RC_BUSY 0x42
+
+struct RC_MSG {
+	uint8_t state;
+	uint16_t locoAddr;
+	bool    useLongAddr;
+	uint8_t payload;
+	bool	isValid;
+	
+}rc_msg;
+
+enum RC_STATE
+{
+	RC_EXPECT_ID0,
+	RC_EXPECT_BYTE,
+	RC_SUCCESS,
+	RC_TIMEOUT,
+};
 
 
 
@@ -41,81 +77,132 @@ void nsRailcom::railcomInit() {
 	Serial.println(F("\n\nEnable railcom"));
 	Serial.flush();
 
-	readRailcom(0, false,1);
+	readRailcom(0, false);
 
 	Serial.end();
 	//railcom uses 250kbaud
 	Serial.begin(250000);
+
+	rc_msg.state = RC_EXPECT_ID0;
 }
 
+
+void nsRailcom::railcomLoop2(void) {
+	//DEBUG USE
+	uint8_t byteNew;
+	uint8_t	byteCount = 0;
+
+	while (Serial.available() > 0) {
+		// read the incoming byte:
+		byteNew = Serial.read();
+
+			switch (rc_msg.state) {
+			case RC_EXPECT_BYTE:
+				if (decodeRailcom(&byteNew)) {
+					rc_msg.payload += (byteNew & 0b00111111);
+					JsonDocument out;
+					out["type"] = "railcom";
+					out["payload"] = rc_msg.payload;
+					out["count"] = DCCpacket.railcomPacketCount;
+					out["flag"] = DCCpacket.railcomCutoutActive;
+					nsDCCweb::sendJson(out);
+				}
+				rc_msg.state = RC_EXPECT_ID0; 
+				break;
+
+			case RC_SUCCESS:
+			break;
+			
+
+			default:
+				if (decodeRailcom(&byteNew)) {
+					if ((byteNew & 0b00111100) == 0) {
+						//found ID0
+						rc_msg.payload = byteNew << 6;
+						rc_msg.state = RC_EXPECT_BYTE;
+						DCCpacket.railcomPacketCount = 10;
+						break;
+					}
+				}
+				rc_msg.state = RC_EXPECT_ID0;
+				break;
+				
+			}
+	
+		//saftey valve,  process max 20 bytes before giving control back to main loop
+			if (byteCount++ > 20) break;
+	}
+	
+}
 
 /// <summary>
 /// Call once per program loop
 /// </summary>
 void nsRailcom::railcomLoop(void) {
+	uint8_t byteNew;
+	uint8_t	byteCount = 0;
 
 	while (Serial.available() > 0) {
 		// read the incoming byte:
-		uint8_t byteNew = Serial.read();
-		//only examine if we are expecting new datagrams
+		byteNew = Serial.read();
 
 		switch (rc_msg.state) {
-		case RC_EXPECT_ID0:
-			if (decodeRailcom(byteNew, &rc_msg.data_ID0)) {
-				//was this a valid ID0?
-				if ((rc_msg.data_ID0 & 0b00111100) == 0) {
-					//valid
-					rc_msg.state = RC_EXPECT_B1;
-				}
-			}
-			break;
-
-		case RC_EXPECT_B1:
-			if (decodeRailcom(byteNew, &rc_msg.data_1)) {
-				//we now have a result
-				rc_msg.data_ID0 = rc_msg.data_ID0 << 6;
-				rc_msg.data_1 += rc_msg.data_ID0;
-				rc_msg.state = RC_SUCCESS;
+		case RC_EXPECT_BYTE:
+			if (decodeRailcom(&byteNew)) {
+				rc_msg.payload += (byteNew & 0b00111111);
 				JsonDocument out;
 				out["type"] = "dccUI";
-				out["cmd"] = "pom";
-				out["action"] = "byteQ";
-				char buff[7];
-				itoa(rc_msg.data_1, buff, 10);
-				out["cvVal"] = buff;  //yes you can assign char[] to a json param
-				out["pkt"] = DCCpacket.railcomPacketCount;
+				out["cmd"] = "railcom";
+				out["payload"] = rc_msg.payload;
+				out["count"] = DCCpacket.railcomPacketCount;
+				out["flag"] = DCCpacket.railcomCutoutActive;
 				nsDCCweb::sendJson(out);
 			}
-			else
-			{
-				//bad data, revert to expect ID0
-				rc_msg.state = RC_EXPECT_ID0;
-			}
+			//stop looking for incoming messages
+			rc_msg.state = RC_SUCCESS;
 			break;
+
+		case RC_SUCCESS:
+		case RC_TIMEOUT:
+			break;
+
+
+		default:
+			if (decodeRailcom(&byteNew)) {
+				if ((byteNew & 0b00111100) == 0) {
+					//found ID0
+					rc_msg.payload = byteNew << 6;
+					rc_msg.state = RC_EXPECT_BYTE;
+					break;
+				}
+			}
+			rc_msg.state = RC_EXPECT_ID0;
+			break;
+
 		}
 
-	}//serial avail loop
+		//saftey valve,  process max 60 bytes before giving control back to main loop
+		if (byteCount++ > 60) break;
+	}
 
-	//have we timedout?
+
+	//timedout?
 	//on the start and append status we might timeout
 
 	if (DCCpacket.railcomPacketCount == 0) {
 		switch (rc_msg.state) {
 		case RC_SUCCESS:
-		case RC_FAIL:
-		case RC_IDLE:
+		case RC_TIMEOUT:
 			break;
+		
 		default:
-			rc_msg.state = RC_TIMEOUT;
-			//send message just once. a failed read will present as ???
-
+			//send this message ONCE
 			JsonDocument out;
 			out["type"] = "dccUI";
-			out["cmd"] = "pom";
-			out["action"] = "byteQ";
-			out["cvVal"] = "???";  //yes you can assign char[] to a json param
+			out["cmd"] = "railcom";
+			out["payload"] = "???";
 			nsDCCweb::sendJson(out);
-			rc_msg.state = RC_IDLE;
+			rc_msg.state = RC_TIMEOUT;
 		}
 	}
 
@@ -123,31 +210,46 @@ void nsRailcom::railcomLoop(void) {
 }
 
 
+
+
+
+
+
+
+
+/*we need a railcomPacketEngine
+resets on bad data
+buffers incoming valid bytes
+is aware of ACK/ NACK
+is aware of which loco we are reading
+and holds last valid read from this
+is also reset from external trigger, i.e. when read is initiated
+
+don't intend to use it to read loco ids from ch1
+
+*/
+
 /// <summary>
-/// Expect a railcom response from a specific loco address
+/// Reset railcom reader, and look for incoming data for locoIndex
 /// </summary>
-/// <param name="addr">loco address</param>
-/// <param name="useLongAddr">is a long address</param>
-void nsRailcom::readRailcom(uint16_t addr, bool useLongAddr, uint16_t cvReg) {
+/// <param name="locoIndex"></param>
+void nsRailcom::readRailcom(uint16_t addr, bool useLongAddr) {
 	rc_msg.locoAddr = addr;
 	rc_msg.useLongAddr = useLongAddr;
 	rc_msg.state = RC_EXPECT_ID0;
+	rc_msg.isValid = false;
 	DCCpacket.railcomPacketCount = 80;
 
+	/*
 	JsonDocument out;
 	out["type"] = "railcom";
 	out["payload"] = "start";
 	out["loco"] = rc_msg.locoAddr;
-	out["cv"] = cvReg;
 	nsDCCweb::sendJson(out);
+	*/
 }
 
-/// <summary>
-/// decode an incoming railcom databyte
-/// </summary>
-/// <param name="inByte">incoming data</param>
-/// <param name="dataOut">decoded value</param>
-/// <returns>true if incoming was a 4/8 coded byte</returns>
+
 bool nsRailcom::decodeRailcom(uint8_t inByte, uint8_t* dataOut) {
 	for (int i = 0; i <= RC_BUSY; i++) {
 		if (inByte == decode[i]) {
@@ -161,12 +263,19 @@ bool nsRailcom::decodeRailcom(uint8_t inByte, uint8_t* dataOut) {
 	return false;
 }
 
+bool nsRailcom::decodeRailcom(uint8_t *inByte) {
+	for (int i = 0; i <= RC_BUSY; i++) {
+		if (*inByte == decode[i]) {
+			//valid
+			*inByte = i;
+			return true;
+		}
+	}
+	//didn't find a match
+	
+	return false;
 
-
-
-
-
-
+}
 
 
 

@@ -1,4 +1,5 @@
 
+
 // DCCcore.h
 //https://www.picotech.com/library/knowledge-bases/oscilloscopes/digital-command-control-dcc-protocol-decoding
 
@@ -6,9 +7,9 @@
 #define _DCCCORE_h
 
 #if defined(ARDUINO) && ARDUINO >= 100
-	#include "Arduino.h"
+#include "Arduino.h"
 #else
-	#include "WProgram.h"
+#include "WProgram.h"
 #endif
 
 
@@ -19,12 +20,11 @@
 #include <EEPROM.h>
 
 
-
 /*version control and capture of some system defaults for new compilations*/
 /*note, code at present does not support logging onto a network as a station*/
 struct CONTROLLER
 {
-	long	softwareVersion = 20241111;  //yyyymmdd captured as an integer
+	long	softwareVersion = 20240426;  //yyyymmdd captured as an integer
 	uint16_t	currentLimit = 1000;
 	uint8_t	voltageLimit = 15;
 	char SSID[21] = "DCC_ESP";
@@ -37,7 +37,7 @@ struct CONTROLLER
 	bool isDirty = false;  //will be true if EEPROM needs to be written
 	bool flagLocoRoster;
 	bool flagTurnoutRoster;
-	bool bootAsAP =false;
+	bool bootAsAP = false;
 };
 
 //note for testing
@@ -47,7 +47,7 @@ struct CONTROLLER
 
 
 /*current monitoring is performed as part of the power object
-trip and trackpower are active flags, changing them will cause the unit to 
+trip and trackpower are active flags, changing them will cause the unit to
 disconnect power for example*/
 struct POWER
 {
@@ -59,7 +59,7 @@ struct POWER
 	/*these are internal working registers*/
 	int ADresult;   //native units
 	/*these are results, populated either from INA or AD system*/
-	float quiescent_mA = 0;  
+	float quiescent_mA = 0;
 	float bus_volts = 0;
 	float bus_mA = 0;
 	/*these relate to acknowledgement pulses in service mode*/
@@ -80,7 +80,7 @@ struct LOCO
 	uint8_t     eStopTimer = 0;
 	bool        use128 = false;  //use 128 speed steps
 	bool        useLongAddress = false;
-	int8_t      shunterMode  =0;   //2020-10-09 0=disabled 1,-1 are enabled and give direction
+	int8_t      shunterMode = 0;   //2020-10-09 0=disabled 1,-1 are enabled and give direction
 	uint8_t     nudge = 0;  //not a flag as such.  set a value to send n packets at full power
 	bool        functionFlag = false;  //true if function value(s) change
 	bool        debug;
@@ -98,7 +98,7 @@ struct TURNOUT
 	bool        thrown = false;
 	uint8_t     history;
 	bool        selected;   //is currently selected in the GUI
-	char        name[9];  
+	char        name[9];
 	bool		changeFlag;
 };
 
@@ -108,24 +108,21 @@ enum POMstate {
 	POM_BYTE_WRITE,
 	POM_BIT,
 	POM_BIT_WRITE,
-	POM_BYTE_READ,
-	POM_BIT_READ
+	POM_BYTE_READ
 };
 
 struct POM {
 	uint16_t addr = 3;
 	bool    useLongAddr;
 	bool	useAccessoryAddr;  //added 2020-06-17
-	bool bitManipulation;  //added 2024-11-11
 	uint16_t cvReg = 29;
 	uint8_t  cvData = 128;
 	uint8_t	 cvBit = 0; //<7> is the bit value, <0-2> the bit pos
 	uint8_t digitPos;
 	uint8_t	state = POM_BYTE;
-	uint8_t timeout = 0;   //used in hardware UI
+	uint8_t timeout = 0;
 	uint8_t packetCount;
-	
-} static m_pom;
+};
 
 
 
@@ -161,7 +158,7 @@ struct CV {
 	cvSTATE state = CV_IDLE;
 	int8_t packetCount;
 	int8_t bitCount;
-} static m_cv;
+};
 /*cvReg and cvData need to be 16 bit ints due to temporary values they hold from key entry*/
 /*2019-11-25 added bool verify, timer for verify pulse detect, also bit manip mode*/
 /*forget bit mode.  in fact there is no verify, lets just byte-read on 'A' key. */
@@ -214,7 +211,7 @@ void updateLocalMachine(void);
 void dccGetSettings();
 void replicateAcrossConsist(int8_t slot);
 void dccPutSettings();
-bool writePOMcommand(const char* addr, uint16_t cv, const char* val, const char* action);
+bool writePOMcommand(const char* addr, uint16_t cv, const char* val);
 bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool verify, bool enterSM, bool exitSM);
 float getVolt();  //debug
 
@@ -227,10 +224,10 @@ void debugTurnoutArray(void);
 
 /*static functions*/
 //keypad related
-static int8_t setTurnoutFromKey(KEYPAD &k);
-static int8_t setFunctionFromKey(KEYPAD &k);
-static void changeDigit(char digitASCII, uint8_t digPos, uint8_t *target);
-static void changeDigit(char digitASCII, uint8_t digPos, uint16_t *target);
+static int8_t setTurnoutFromKey(KEYPAD& k);
+static int8_t setFunctionFromKey(KEYPAD& k);
+static void changeDigit(char digitASCII, uint8_t digPos, uint8_t* target);
+static void changeDigit(char digitASCII, uint8_t digPos, uint16_t* target);
 static bool setCVfromKey(void);
 
 //display related
@@ -239,16 +236,16 @@ static void updateCvDisplay(void);
 static void updateUNIdisplay();
 
 //jogwheel related
-static int8_t setLocoFromJog(nsJogWheel::JOGWHEEL &j);
+static int8_t setLocoFromJog(nsJogWheel::JOGWHEEL& j);
 
 //system or hardware
 static void ina219Mode(boolean Avg);
-static int8_t setLoco(LOCO *loc, int8_t speed, bool dir);
+static int8_t setLoco(LOCO* loc, int8_t speed, bool dir);
 
-int8_t findLoco(char *address, char *slotAddress, bool ignoreEmpty = false);
+int8_t findLoco(char* address, char* slotAddress, bool ignoreEmpty = false);
 int8_t findTurnout(uint16_t turnoutAddress);
-static LOCO *getNextLoco(LOCO *loc);
-void incrLocoHistory(LOCO *loc);
+static LOCO* getNextLoco(LOCO* loc);
+void incrLocoHistory(LOCO* loc);
 
 /*end list of functions */
 

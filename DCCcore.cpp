@@ -1,3 +1,4 @@
+
 //DCCcore.cpp 
 // 
 //2024-11-04 railcom cutout is sent after every DCC speed packet and after a POM packet (see DCCpacket.doCutout=true).  If a loco is writen to via POM, it can respond via Railcom
@@ -6,8 +7,8 @@
 #include "Global.h"
 #include "DCCcore.h"
 #include "DCClayer1.h"
+#include "DCCweb.h"
 #include "Railcom.h"
-//#include "DCCweb.h"  //debug just for json messages
 
 #include <LiquidCrystal_I2C.h>   //Github mlinares1998/NewLiquidCrystal
 //https://github.com/mlinares1998/NewLiquidCrystal
@@ -33,8 +34,8 @@ BOOTUP_LCD
 	*/
 	Adafruit_INA219 ina219(INA219_ADDRESS);
 #else
-	/*default is 0x40*/
-	Adafruit_INA219 ina219;
+/*default is 0x40*/
+Adafruit_INA219 ina219;
 #endif
 
 
@@ -70,6 +71,8 @@ LOCO loco[MAX_LOCO];
 ACCESSORY accessory;
 bool quarterSecFlag;
 
+static CV m_cv;  //2024-11-16 moved it here from .h
+static POM m_pom;
 
 uint8_t   m_generalTimer;
 uint8_t  m_tick;  //25 ticks in a quarter second
@@ -223,7 +226,7 @@ machineSTATE m_machineSE = M_BOOT;
 /*DEBUG ROUTINES*/
 void debugTurnoutArray(void) {
 	//debug dummp the turnout array
-	for (int i = 0;i < MAX_TURNOUT;++i) {
+	for (int i = 0; i < MAX_TURNOUT; ++i) {
 		Serial.println("");
 		Serial.print(turnout[i].address);
 		Serial.print(" ");
@@ -236,10 +239,10 @@ void debugTurnoutArray(void) {
 void debugPacket(void) {
 	Serial.println(F("dccPacket"));
 
-	for (int i = 0;i <DCCpacket.packetLen ;++i) {
-		Serial.println(DCCpacket.data[i],BIN);
+	for (int i = 0; i < DCCpacket.packetLen; ++i) {
+		Serial.println(DCCpacket.data[i], BIN);
 	}
-	Serial.println(DCCpacket.packetLen,DEC);
+	Serial.println(DCCpacket.packetLen, DEC);
 }
 
 
@@ -265,7 +268,7 @@ Consists are not supported.
 
 
 struct UNITHROTTLE {
-	LOCO *locPtr;
+	LOCO* locPtr;
 	uint8_t digitPos;
 }unithrottle;
 
@@ -287,669 +290,473 @@ void dccPacketEngine(void) {
 	 *
 	 *note need to add funcIndex and run this thro 0-11 for 4loco x 3 func groups
 	 *int(funcIndex/3) to point to Loco[] and then mod 3 for the group itself
-	 * 
+	 *
 	 * 2023-08-30 maybe we should not wipe the cts flag on entry, but instead build the packet and test when cts flag is still there just at the point
 	 * of writing it.  That said, the int-routine just copies whatever's in the buffer at the point it decides to read it. so if we keep that flag mostly clear
 	 * then we should spot it going hi immediately after the buffer was read. so yes, keep code as is.
 	*/
-	
+
 
 	if (!DCCpacket.clearToSend) return;
 
-		DCCpacket.clearToSend = false;
-		uint8_t i=0;
+	DCCpacket.clearToSend = false;
+	uint8_t i = 0;
 
-		//2021-10-14 enable/disable of track power is now controlled from DCClayer1
-		DCCpacket.trackPower = power.trackPower;
-		//2023-09-27 default is to disable railcom, and only enable on a loco speed packet
-		DCCpacket.doCutout = false;
-
-		
-		switch (dccSE) {
-
-		case DCC_LOCO:
-			power.serviceMode = false;
-			/*skip any loco packets with address zero as this is a broadcast address*/
-			if (loco[m_locoIndex].address ==0) {
-				/*send idle for zero-address (empty) slots*/
-				DCCpacket.data[0] = 0xFF;
-				DCCpacket.data[1] = 0;
-				DCCpacket.data[2] = 0xFF;
-				DCCpacket.packetLen = 3;
-				
-			}
-			else
-			{
-				/*Build a packet, first step is to calculate NMRA speedCode to send to line*/
-				uint8_t speedCode = loco[m_locoIndex].speedStep;
-				/*2019-10-11 speedStep is the UI displayed value e.g. 0-28 or 0-128, active braking will halve this value*/
-				if (loco[m_locoIndex].brake) { speedCode = speedCode / 2; }
-				/*this does not impact the value displayed but does impact the value transmitted to line*/
-							   
-				if (loco[m_locoIndex].use128) {
-					/*calculate 128 step code. speed value 1 in the UI maps to 2 in NMRA code
-					display code 126 represents max speed and is a NRMA code of 127*/
-					if (speedCode > 0) { speedCode++; }
-					speedCode &= 0b01111111;
-				}
-				else {
-					/*calculate 28 step code. see S-9.2 para 60*/
-					if (speedCode > 0) {
-						speedCode += 3;
-						/*move <0> to <5> then shift result >>1*/
-						speedCode &= 0b00011111;
-						speedCode |= (speedCode & 0x01) << 5;
-						speedCode = speedCode >> 1;
-					}
-				}
-				/*done, how we use this code depends on whether we use baseline or extended packets
-				 *note that an address<127 with a 28 step speed is a baseline packet.  This code does
-				 *not implement addresses<127 as long adddresses.
-				 *Decoders can be set to respond to either short or long address, but never both.
-				 */
-			
-				if (loco[m_locoIndex].useLongAddress) {
-					/*long address format S9.2.1 para 60*/
-					DCCpacket.data[0] = loco[m_locoIndex].address >> 8;
-					DCCpacket.data[0] |= 0b11000000;
-					DCCpacket.data[1] = loco[m_locoIndex].address & 0x00FF;
-					i = 2;
-				}
-				else {
-					DCCpacket.data[0] = (loco[m_locoIndex].address & 0x7F);
-					i = 1;
-				}
-
-				if (loco[m_locoIndex].use128) {
-					/*two speed-bytes*/
-					DCCpacket.data[i] = 0b00111111;
-					i++;
-					/*mask in <7> which is direction*/
-					if (loco[m_locoIndex].forward) { speedCode |= 0b10000000; }
-					/*nudge code, will assert max speed in alternate directions until nudge=0*/
-					if (loco[m_locoIndex].nudge > 0) {
-						speedCode = 0x7F;
-						if ((loco[m_locoIndex].nudge & 0x01) == 0x00) { speedCode ^= 0b10000000; }
-						loco[m_locoIndex].nudge--;
-					}
-					/*special case for eStop*/
-					if (loco[m_locoIndex].eStopTimer != 0) { speedCode = 0x01; }
-					DCCpacket.data[i] = speedCode;
-					i++;
-				}
-				else {
-					/*write single speed byte in legacy mode 010=reverse speed 011=forward*/
-					  /*mask in direction bit <5>*/
-					if (loco[m_locoIndex].forward) { speedCode |= 0b00100000; }
-					/*nudge code, will assert max speed in alternate directions until nudge=0*/
-					if (loco[m_locoIndex].nudge > 0) {
-						speedCode = 0x1F;
-						if ((loco[m_locoIndex].nudge & 0x01) == 0x00) { speedCode ^= 0b00100000; }
-						loco[m_locoIndex].nudge--;
-					}
-					/*special case for eStop, need to preserve direction*/
-					if (loco[m_locoIndex].eStopTimer != 0) { speedCode &= 0b00100000; speedCode |= 0x01; }
-					/*set <7-6> = 01*/
-					DCCpacket.data[i] = speedCode | 0b01000000;
-					i++;
-				}
-				/*calc checksum and packet length. i points to checksum byte*/
-				DCCpacket.data[i] = 0;
-				for (DCCpacket.packetLen = 0;DCCpacket.packetLen < i;DCCpacket.packetLen++) {
-					DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
-				}
-				DCCpacket.packetLen++;
-				//will exit with DCCpacket.packetLen set at correct length of i+1
-
-				DCCpacket.doCutout = true;
-
-			} //end zero address test
-
-			  //only advance locoIndex if we don't need to deal with nudge 
-			if (loco[m_locoIndex].nudge == 0) { m_locoIndex++; }
-			if (m_locoIndex >= MAX_LOCO) {
-				m_locoIndex = 0;
-			}
-			//next up is function packet
-			dccSE = DCC_FUNCTION;
-			break;
+	//2021-10-14 enable/disable of track power is now controlled from DCClayer1
+	DCCpacket.trackPower = power.trackPower;
+	//2023-09-27 default is to disable railcom, and only enable on a loco speed packet
+	DCCpacket.doCutout = false;
 
 
-			//2024-11-04 a wierd bug on function group1.  7003 is a long address but we are transmitting only the >>8 part of this
-			//and withought |= 0b11000000
-			//and then 3 is being treated as a long address.
+	switch (dccSE) {
 
-
-		case DCC_FUNCTION:
-			//function packets are controlled by funcIndex and transmit at 1/3rd rate of loco
-		{//block start
-			uint8_t func_Value;
-			uint8_t func_LocoIndex = m_funcIndex / 3;
-
-			if (loco[func_LocoIndex].address != 0) {
-				/*2019-10-08 support long address*/
-				if (loco[func_LocoIndex].useLongAddress) {   
-					/*long address format S9.2.1 para 60*/
-					DCCpacket.data[0] = loco[func_LocoIndex].address >> 8;   //upper byte of address
-					DCCpacket.data[0] |= 0b11000000;
-					DCCpacket.data[1] = loco[func_LocoIndex].address & 0x00FF;   //lower byte of address
-					i = 2;
-				}
-				else {
-					DCCpacket.data[0] = (loco[func_LocoIndex].address & 0x7F);
-					i = 1;
-				}
-
-				/*i will point to next data[] element we write to*/
-
-				switch (m_funcIndex % 3) {
-				case 1:
-					/*send a function group 2 packet S-9.2.1 para 270 101SDDDD*/
-					func_Value = (loco[func_LocoIndex].function >> 5) & 0b1111;
-					func_Value |= 0b10110000;
-					break;
-				case 2:
-					/*send a function group 3 packet S-9.2.1 para 270 101SDDDD*/
-					func_Value = (loco[func_LocoIndex].function >> 9) & 0b1111;
-					func_Value |= 0b10100000;
-					break;
-				default:
-					/*send a function group 1 packet S-9.2.1 para 260 100DDDDD*/
-					/*take 5 function bits and move bit 0 to bit 4*/
-					func_Value = loco[func_LocoIndex].function & 0b11111;
-					if (func_Value & 0x01) { func_Value = func_Value | 0b100000; }
-					func_Value = func_Value >> 1;
-					func_Value |= 0b10000000;
-				}
-				DCCpacket.data[i] = func_Value;
-				i++;
-
-				/*calc checksum and packet length. i points to checksum byte*/
-				DCCpacket.data[i] = 0;
-				for (DCCpacket.packetLen = 0;DCCpacket.packetLen < i;DCCpacket.packetLen++) {
-					DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
-				}
-				DCCpacket.packetLen++;
-				/*will exit with DCCpacket.packetLen set at correct length of i+1*/
-
-			}
-
-			/*increment funcIndex and rollover at 3*max_loco. Next up is loco packet*/
-			++m_funcIndex;
-			if (m_funcIndex >= MAX_LOCO * 3) { m_funcIndex = 0; }
-			dccSE = DCC_LOCO;
-		}//block end
-			break;
-
-		case DCC_POM:
-			m_pom.packetCount -= m_pom.packetCount > 0 ? 1 : 0;
-			if (m_pom.packetCount != 0) {break; }
-			/*S9.2.1 configuration variable access instruction, long form. para 375 aka POM
-			addr [1 or 2] 1110CCVV 0 VVVVVVVV 0 DDDDDDDD [checksum] max 6 byte packet.  two packets must
-			be received for the decoder to act. any broadcast or other decoder specific packet in between
-			will cancel the write.  so in theory we write three identical packets and this should work.*/
-
-			//2020-6-17 can also write to accessory 10AAAAAA 0 1AAACDDD address see S9.2.1 para 465
-
-			switch (m_pom.state) {
-			
-			case POM_BYTE:
-			case POM_BIT:
-				/*whilst user is editing POM values, keep transmitting loco bytes*/
-				dccSE = DCC_LOCO;
-				break;
-
-		
-				case POM_BYTE_WRITE:
-					//set to repeat packet transmit 4 times
-					m_pom.packetCount = 4;
-		//2020-06-17 add accessory support
-					if (m_pom.useAccessoryAddr) {
-						/*accessory address format S9.2.1 para 420  10AAAAAA 0 1AAACDDD, where CDDD=0000 is the only type
-						supported.  first byte is 6 lsb, second holds 3 msb but inverted.
-						Note that turnouts are grouped in 4 off a single base address.  i.e. addr 1-4 is a single controller
-						addr 5-9 maps to a second.  so if we set CV 7 on  addr 1-4, since we send CDDD=0000 it applies to the 
-						whole controller.  whereas it is possible that each turnout has a CV7, and these can be individually addressed
-						only its not done. the controller has one CV7 instance, and if you write 1-4 that single CV7 will be changed.*/
-						DCCpacket.data[0] = m_pom.addr & 0b00111111;
-						DCCpacket.data[0] |= 0b10000000;
-						DCCpacket.data[1] = ~(m_pom.addr >> 1);
-						DCCpacket.data[1] &= 0b01110000;
-						DCCpacket.data[1] |= 0b10000000;
-						
-						DCCpacket.data[0] = (m_pom.addr >> 3) & 0b00111111;
-						DCCpacket.data[0] |= 0b10000000;
-						DCCpacket.data[1] = ~(m_pom.addr >> 4);
-						DCCpacket.data[1] &= 0b01110000;
-						DCCpacket.data[1] |= 0b10000000;
-						
-						i = 2;
-					}
-					else if (m_pom.useLongAddr) {
-						/*long address format S9.2.1 para 60*/
-						DCCpacket.data[0] = m_pom.addr >> 8;
-						DCCpacket.data[0] |= 0b11000000;
-						DCCpacket.data[1] = m_pom.addr & 0x00FF;
-						i = 2;
-					}
-					else {
-						DCCpacket.data[0] = (m_pom.addr & 0x7F);
-						i = 1;
-					}
-
-					/*CV#1 is transmitted as zero*/
-					DCCpacket.data[i] = (m_pom.cvReg - 1) >> 8;
-					DCCpacket.data[i] |= 0b11101100;  //byte write CC=11
-					i++;
-					DCCpacket.data[i] = (m_pom.cvReg - 1) & 0xFF;
-					i++;
-					DCCpacket.data[i] = m_pom.cvData;
-					i++;
-					/*calc checksum and packet length. i points to checksum byte*/
-					DCCpacket.data[i] = 0;
-					for (DCCpacket.packetLen = 0;DCCpacket.packetLen < i;DCCpacket.packetLen++) {
-						DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
-					}
-					DCCpacket.packetLen++;
-					/*will exit with DCCpacket.packetLen set at correct length of i+1*/
-					m_pom.state = POM_BYTE;
-				break;
-
-
-				case POM_BYTE_READ:  //2024-05-04
-					//2024-11-02 note, S9.2.1 para 375 only defines write bit/byte and verify bit/byte
-					//to read a byte we need to refer to S9.3.2 para 5.1.1 but actually the read 1 byte command is actually the byte verify command with data=0
-
-					//Byte read: addr [1 or 2]  111001VV 0 VVVVVVVV 0 00000000 [checksum] where V=cv
-					//Bit read 
-
-
-					//If railcom is enabled, the decoder can send "operations mode acknowledgment".  See para 495, which refers to S9.3.1(no longer exists) and S9.3.2.(railcom)
-					// except "operations mode acknowledgment" does not appear in that doc.  But see p19 of that doc, POM section, it does define an ACK packet.
-
-					/*findings. you must turn off auto discovery in cv28, as this randomly puts a series of 6 0x0F bytes in ch2.
-					you must turn off broadcast on ch1, because this puts random non 4-8 bytes on the rc cutout
-					you must turn on broadcast on ch2, and here you will see a 2 byte (12 bit) datagram which is the returned ID=0 and cv value
-					and the orientation of the loco seems to affect the ch1 garbage, however the ch2 stuff still reads correclty in either orientation
-					tests also prove that with all the other traffic for loco 6830, such as speed and func, it still responds to POM read correctly.
-					*/
-
-
-
-					m_pom.packetCount = 4;
-					if (false) {
-					//placeholder for accessory read
-					}
-					else if (m_pom.useLongAddr) {
-						/*long address format S9.2.1 para 60*/
-						DCCpacket.data[0] = m_pom.addr >> 8;
-						DCCpacket.data[0] |= 0b11000000;
-						DCCpacket.data[1] = m_pom.addr & 0x00FF;
-						i = 2;
-						}
-					else {
-						DCCpacket.data[0] = (m_pom.addr & 0x7F);
-						i = 1;
-					}
-					/*CV#1 is transmitted as zero*/
-					DCCpacket.data[i] = (m_pom.cvReg - 1) >> 8;
-					DCCpacket.data[i++] |= 0b11100100;  //byte verify C=01
-					DCCpacket.data[i++] = (m_pom.cvReg - 1) & 0xFF;
-					DCCpacket.data[i++] =0;  //send zero in place of a cv value.  This is per S9.3.2 though it contradicts S9.2.1 para 390
-					/*calc checksum and packet length. i points to checksum byte*/
-					DCCpacket.data[i] = 0;
-					for (DCCpacket.packetLen = 0;DCCpacket.packetLen < i;DCCpacket.packetLen++) {
-						DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
-					}
-					DCCpacket.packetLen++;
-					/*will exit with DCCpacket.packetLen set at correct length of i+1*/
-					m_pom.state = POM_BYTE;  //revert to transmitting packets, i.e. this packet gets sent
-
-					
-#ifdef _RAILCOM_h
-					nsRailcom::readRailcom(m_pom.addr,m_pom.useLongAddr, m_pom.cvReg);
-#endif
-				break;
-
-
-				case POM_BIT_READ:
-					//2024-11-02 note, S9.2.1 para 375 only defines write bit/byte and verify bit/byte
-					//to read a byte we need to refer to S9.3.2 para 5.1.1 but actually the read 1 byte command is actually the byte verify command with data=0
-
-					//Bit manipulation: addr [1 or 2]  111010VV 0 VVVVVVVV 0 DDDDDDDD [checksum] where V=cv
-					//Bit read DDDDDDDD is 11100BBB   where the second 0 is an attempt to verify zero. I assume, like byte read that verifying a zero will generate the 
-					//actual bit setting
-
-
-					m_pom.packetCount = 4;
-					if (false) {
-						//placeholder for accessory read
-					}
-					else if (m_pom.useLongAddr) {
-						/*long address format S9.2.1 para 60*/
-						DCCpacket.data[0] = m_pom.addr >> 8;
-						DCCpacket.data[i] |= 0b11101000;  //bit manipulation CC=10
-
-						
-						DCCpacket.data[1] = m_pom.addr & 0x00FF;
-						i = 2;
-
-					}
-					else {
-						DCCpacket.data[0] = (m_pom.addr & 0x7F);
-						i = 1;
-					}
-					/*CV#1 is transmitted as zero*/
-					DCCpacket.data[i] = (m_pom.cvReg - 1) >> 8;
-					DCCpacket.data[i++] |= 0b11101000;  //bit manipulation CC=10
-					DCCpacket.data[i++] = (m_pom.cvReg - 1) & 0xFF;
-					/*111CDBBB  C=0 for verify, D is the bit value (use 0), BBB bit pos para 405*/
-					DCCpacket.data[i] = 0b11100000;  //for bit verify
-					DCCpacket.data[i++] |= (m_pom.cvBit & 0b111);
-					/*calc checksum and packet length. i points to checksum byte*/
-					DCCpacket.data[i] = 0;
-					for (DCCpacket.packetLen = 0; DCCpacket.packetLen < i; DCCpacket.packetLen++) {
-						DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
-					}
-					DCCpacket.packetLen++;
-					/*will exit with DCCpacket.packetLen set at correct length of i+1*/
-					m_pom.state = POM_BIT;
-
-#ifdef _RAILCOM_h
-					nsRailcom::readRailcom(m_pom.addr, m_pom.useLongAddr, m_pom.cvReg);
-#endif
-					break;
-
-				case POM_BIT_WRITE:
-					m_pom.packetCount = 4;
-					if (m_pom.useLongAddr) {
-						/*long address format S9.2.1 para 60
-						14bit address, so shift 8 means 6msbit are used*/
-						DCCpacket.data[0] = m_pom.addr >> 8;
-						DCCpacket.data[0] |= 0b11000000;
-						DCCpacket.data[1] = m_pom.addr & 0x00FF;
-						i = 2;
-					}
-					else {
-						DCCpacket.data[0] = (m_pom.addr & 0x7F);
-						i = 1;
-					}
-					/*CV#1 is transmitted as zero*/
-					DCCpacket.data[i] = (m_pom.cvReg - 1) >> 8;
-					DCCpacket.data[i++] |= 0b11101000;  //bit manipulation CC=10
-					DCCpacket.data[i++] = (m_pom.cvReg - 1) & 0xFF;
-					/*111CDBBB  C=1 for write, D is the bit value, BBB bit pos para 405*/
-					DCCpacket.data[i] = 0b11110000;  //would be 11100000 for bit verify
-					DCCpacket.data[i] |= (m_pom.cvBit & 0b111);
-					if (m_pom.cvBit >= 128) {
-						//assert the desired bit value
-						DCCpacket.data[i] |= 0b1000;
-					}
-					i++;
-					/*calc checksum and packet length. i points to checksum byte*/
-					DCCpacket.data[i] = 0;
-					for (DCCpacket.packetLen = 0;DCCpacket.packetLen < i;DCCpacket.packetLen++) {
-						DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
-					}
-					DCCpacket.packetLen++;
-					/*will exit with DCCpacket.packetLen set at correct length of i+1*/
-					m_pom.state = POM_BIT;
-					break;
-			}
-				
-			//2024-05-06 send a cutout at end of POM packet
-			DCCpacket.doCutout = true;
-
-			break; //end POM case
-					
-
-		case DCC_SERVICE:
-			/*service mode, the makes use of a state engine within the cv struct see S9.2.3*/
-			power.serviceMode = true;
-			m_cv.packetCount -= m_cv.packetCount > 0 ? 1 : 0;
-			if (m_cv.packetCount != 0) { break; }
-
-			switch (m_cv.state) {
-			case PG_START:
-				/*PAGED CV ADDRESSING para 205. 3 or more reset packets*/
-				DCCpacket.longPreamble = true;
-				m_cv.packetCount = 10;
-				DCCpacket.data[0] = 0x00;
-				DCCpacket.data[1] = 0x00;
-				DCCpacket.data[2] = 0x00;
-				DCCpacket.packetLen = 3;
-				m_cv.state = PG_PG_WRITE;
-				break;
-
-			case PG_PG_WRITE:
-				m_cv.packetCount = 6;
-				/* 5 or writes to page register
-				 * long-preamble 0 0111CRRR 0 DDDDDDDD 0 EEEEEEEE 1
-				 * C=1 for write RRR=101 for page*/
-				DCCpacket.data[0] = 0b01111101;
-				DCCpacket.data[1] = m_cv.pgPage;
-				DCCpacket.data[2] = DCCpacket.data[0] ^ DCCpacket.data[1];
-				m_cv.state = PG_RESET;
-				break;
-
-			case PG_RESET:
-				/*6 or more reset packets*/
-				m_cv.packetCount = 10;
-				DCCpacket.data[0] = 0x00;
-				DCCpacket.data[1] = 0x00;
-				DCCpacket.data[2] = 0x00;
-				m_cv.state = PG_WRITE;
-				break;
-
-			case PG_WRITE:
-				/*5 or more writes to data register 1-4*/
-				m_cv.packetCount = 6;
-				DCCpacket.data[0] = m_cv.pgReg | 0b01111000;
-				DCCpacket.data[1] = m_cv.cvData;
-				DCCpacket.data[2] = DCCpacket.data[0] ^ DCCpacket.data[1];
-				m_cv.state = PG_RESET_2;
-				break;
-
-			case PG_RESET_2:
-				/* 10 reset packets */
-				m_cv.packetCount = 10;
-				DCCpacket.data[0] = 0x00;
-				DCCpacket.data[1] = 0x00;
-				DCCpacket.data[2] = 0x00;
-				m_cv.state = CV_IDLE;
-				break;
-
-			case D_START:
-				/*DIRECT MODE para 100.  3 or more reset packets*/
-				DCCpacket.longPreamble = true;
-				m_cv.packetCount = 10;
-				DCCpacket.data[0] = 0x00;
-				DCCpacket.data[1] = 0x00;
-				DCCpacket.data[2] = 0x00;
-				DCCpacket.packetLen = 3;
-				m_cv.state = D_WRITE;
-				break;
-
-			case D_WRITE:
-				/*5 or more writes*/
-				m_cv.packetCount = 6;
-				/*Long-preamble 0 0111CCAA 0 AAAAAAAA 0 DDDDDDDD 0 EEEEEEEE 1
-				 *CC=11 for byte write S9.2.3 para 110
-				 *the CV target AAAAAAAAAA target is 0 for CV1, etc
-				 */
-				DCCpacket.data[0] = ((m_cv.cvReg - 1) >> 8) | 0b01111100;
-				DCCpacket.data[1] = (m_cv.cvReg - 1) & 0xFF;
-				DCCpacket.data[2] = m_cv.cvData;
-				DCCpacket.data[3] = DCCpacket.data[0] ^ DCCpacket.data[1] ^ DCCpacket.data[2];
-				DCCpacket.packetLen = 4;
-				m_cv.state = D_RESET;
-				break;
-
-			case D_RESET:
-				/*6 or more write or reset packets*/
-				m_cv.packetCount = 10;
-				DCCpacket.data[0] = 0x00;
-				DCCpacket.data[1] = 0x00;
-				DCCpacket.data[2] = 0x00;
-				DCCpacket.packetLen = 3;
-				m_cv.state = CV_IDLE;
-				break;
-
-			case CV_IDLE:
-				DCCpacket.longPreamble = false;
-				DCCpacket.data[0] = 0xFF;
-				DCCpacket.data[1] = 0x00;
-				DCCpacket.data[2] = 0xFF;
-				DCCpacket.packetLen = 3;
-				break;
-
-			case RD_START:
-				/*for CV read, we will read 8 bits in turn, followed by a byte-read to confirm the
-				inferred byte value is correct.   Means we repeat the verify bit sequence 8 times over
-				with 1 following byte verify.
-				/*DIRECT MODE para 100.  3 or more reset packets*/
-			
-				DCCpacket.longPreamble = true;
-				m_cv.packetCount = 10;
-				DCCpacket.data[0] = 0x00;
-				DCCpacket.data[1] = 0x00;
-				DCCpacket.data[2] = 0x00;
-				DCCpacket.packetLen = 3;
-				m_cv.state = RD_VERIFY;
-				break;
-
-			case RD_VERIFY:  //RD_command
-				/*5 or more verifies*/
-				m_cv.packetCount = 6;
-				/*Long-preamble 0 011110AA 0 AAAAAAAA 0 111KDBBB 0 EEEEEEEE 1
-				Where BBB represents the bit position within the CV (000 being defined as bit 0)
-				and D contains the value of the bit to be verified or written, K=1 write-bit 
-				K=0 is verify bit. see S9.2.3 para 130
-				the CV target AAAAAAAAAA target is 0 for CV1, etc
-				 */
-				if (m_cv.bitCount >=0) {
-					DCCpacket.data[0] = ((m_cv.cvReg - 1) >> 8) | 0b01111000;
-					DCCpacket.data[1] = (m_cv.cvReg - 1) & 0xFF;
-					DCCpacket.data[2] = 0b11101000 | (m_cv.bitCount & 0b111);
-					DCCpacket.data[3] = DCCpacket.data[0] ^ DCCpacket.data[1] ^ DCCpacket.data[2];
-					DCCpacket.packetLen = 4;
-					m_cv.state = RD_RESET;
-				}
-				else {
-					/*byte verify the data we pulled bitwise earlier
-					Long-preamble 0 0111CCAA 0 AAAAAAAA 0 DDDDDDDD 0 EEEEEEEE 1
-					CC=01 Verify byte	*/
-					DCCpacket.data[0] = ((m_cv.cvReg - 1) >> 8) | 0b01110100;
-					DCCpacket.data[1] = (m_cv.cvReg - 1) & 0xFF;
-					DCCpacket.data[2] = (m_cv.cvData & 0xFF);
-					DCCpacket.data[3] = DCCpacket.data[0] ^ DCCpacket.data[1] ^ DCCpacket.data[2];
-					DCCpacket.packetLen = 4;
-					m_cv.state = RD_RESET;
-				}
-				//start looking for ACK pulse. Per the S-9.2.3 para 55, this can occur anytime from the second command packet
-				//onward to end of recovery time.
-				ina219Mode(false);  //kick off a one-time 69mS sample
-				
-				break;
-
-			case RD_RESET:
-				/*6 or more reset packets, during which we look for the ACK pulse.  This should occur
-				within the 50mS it takes to issue reset packets. Might it happen sooner during RD_VERIFY?*/
-				m_cv.packetCount = 8;
-				DCCpacket.data[0] = 0x00;
-				DCCpacket.data[1] = 0x00;
-				DCCpacket.data[2] = 0x00;
-				DCCpacket.packetLen = 3;		
-				m_cv.state = RD_FINAL;
-				break;
-
-			case RD_FINAL:
-#ifdef USE_ANALOG_MEASUREMENT
-				/*when detecting a 6mS current pulse using the AD converter, this is done outside of this routine
-				on a 1mS sample frequency. This routine won't be called again until the RD_RESET packet has been
-				sent out*/
-#else
-				//read the result of the one-time sample. was 128 samples, and we need one third  of these to be >55mA up-pulse
-				power.ackFlag = ((ina219.getCurrent_mA() - power.ackBase_mA) > 20)  ? true:false;
-#endif			
-				//read the ack pulse as sampled, 80mS+ will have passed since RD_RESET entered
-				if (m_cv.bitCount >=0) {
-					//bits 7 thro to 1
-					m_cv.cvData = m_cv.cvData << 1;
-					if (power.ackFlag) { m_cv.cvData++; }
-					m_cv.bitCount--;
-					m_cv.state = RD_START;
-					//note, if we exit -1 then loop will do a byte verify text next
-					break;
-				}
-				else {
-					//arrive here with -1 and ackFlag true if we have correctly pulled the whole byte
-					if (power.ackFlag) {
-						m_cv.cvData &= 0xFF;
-						trace(Serial.println(F("verify good"));)
-					}else
-					{//byte verify failed, indicate we have unknown value
-						trace(Serial.printf("verify fail %d \n\r",m_cv.cvData);)
-						
-						m_cv.cvData = -1;
-					}
-					m_cv.state = CV_IDLE;
-					//exit with _cv.bitCount still at -1
-					//revert to averaging mode
-					ina219Mode(true);
-					
-					//2019-12-02 not very elegant, but update display here else it won't happen
-					//unless we code as a timeout elsewhere
-					updateCvDisplay();
-					//2020-12-23 call DCCweb to send a read result over the websocket
-#ifdef _DCCWEB_h
-					trace(Serial.printf("reg %d val %d\n\r", m_cv.cvReg, m_cv.cvData);)
-					nsDCCweb::broadcastReadResult(m_cv.cvReg, m_cv.cvData);
-#endif
-				}
-
-
-			}
-
-			break;
-
-
-		case DCC_ESTOP:
-			//broadcast an eStop packet, set all locos to zero speed. see S=9.2.1 para 50 and para 100
-			DCCpacket.longPreamble = false;
-			DCCpacket.data[0] = 0x00;
-			DCCpacket.data[1] = 0b01000001;
-			DCCpacket.data[2] = 0b01000001;
+	case DCC_LOCO:
+		power.serviceMode = false;
+		/*skip any loco packets with address zero as this is a broadcast address*/
+		if (loco[m_locoIndex].address == 0) {
+			/*send idle for zero-address (empty) slots*/
+			DCCpacket.data[0] = 0xFF;
+			DCCpacket.data[1] = 0;
+			DCCpacket.data[2] = 0xFF;
 			DCCpacket.packetLen = 3;
 
-			//2021-9-1 bug fix
-			//my TCS decoder does not respond to broadcast eStop. my Zen and NCE decoders do
-			//so, send just one eStop broadcast packet and then set all loco slots to eStop 
-			//as belt-and-braces
-			for (auto& loc : loco) {
-				loc.speed = 0;
-				loc.speedStep = 0;
-				//note a non-zero eStopTimer lets the dcc packet engine know to transmit an estop message
-				loc.eStopTimer = LOCO_ESTOP_TIMEOUT;
-				//flag a change so this gets broadcast over all channels
-				loc.changeFlag = true;
+		}
+		else
+		{
+			/*Build a packet, first step is to calculate NMRA speedCode to send to line*/
+			uint8_t speedCode = loco[m_locoIndex].speedStep;
+			/*2019-10-11 speedStep is the UI displayed value e.g. 0-28 or 0-128, active braking will halve this value*/
+			if (loco[m_locoIndex].brake) { speedCode = speedCode / 2; }
+			/*this does not impact the value displayed but does impact the value transmitted to line*/
+
+			if (loco[m_locoIndex].use128) {
+				/*calculate 128 step code. speed value 1 in the UI maps to 2 in NMRA code
+				display code 126 represents max speed and is a NRMA code of 127*/
+				if (speedCode > 0) { speedCode++; }
+				speedCode &= 0b01111111;
+			}
+			else {
+				/*calculate 28 step code. see S-9.2 para 60*/
+				if (speedCode > 0) {
+					speedCode += 3;
+					/*move <0> to <5> then shift result >>1*/
+					speedCode &= 0b00011111;
+					speedCode |= (speedCode & 0x01) << 5;
+					speedCode = speedCode >> 1;
+				}
+			}
+			/*done, how we use this code depends on whether we use baseline or extended packets
+			 *note that an address<127 with a 28 step speed is a baseline packet.  This code does
+			 *not implement addresses<127 as long adddresses.
+			 *Decoders can be set to respond to either short or long address, but never both.
+			 */
+
+			if (loco[m_locoIndex].useLongAddress) {
+				/*long address format S9.2.1 para 60*/
+				DCCpacket.data[0] = loco[m_locoIndex].address >> 8;
+				DCCpacket.data[0] |= 0b11000000;
+				DCCpacket.data[1] = loco[m_locoIndex].address & 0x00FF;
+				i = 2;
+			}
+			else {
+				DCCpacket.data[0] = (loco[m_locoIndex].address & 0x7F);
+				i = 1;
 			}
 
-			/*restore any power trip condition*/
-			/*2020-03-29 restore power if it was turned off remotely*/
-
-			if (power.trip || !power.trackPower) {
-				power.bus_mA = 50;  //emulate 50mA and 5v to avoid retriggering a trip from held value
-				power.bus_volts = 5;			
-				power.trip = false;
-				power.trackPower = true;
-				ina219Mode(true);  //use averaging mode (trip may have been during SM read)
+			if (loco[m_locoIndex].use128) {
+				/*two speed-bytes*/
+				DCCpacket.data[i] = 0b00111111;
+				i++;
+				/*mask in <7> which is direction*/
+				if (loco[m_locoIndex].forward) { speedCode |= 0b10000000; }
+				/*nudge code, will assert max speed in alternate directions until nudge=0*/
+				if (loco[m_locoIndex].nudge > 0) {
+					speedCode = 0x7F;
+					if ((loco[m_locoIndex].nudge & 0x01) == 0x00) { speedCode ^= 0b10000000; }
+					loco[m_locoIndex].nudge--;
+				}
+				/*special case for eStop*/
+				if (loco[m_locoIndex].eStopTimer != 0) { speedCode = 0x01; }
+				DCCpacket.data[i] = speedCode;
+				i++;
 			}
-			
+			else {
+				/*write single speed byte in legacy mode 010=reverse speed 011=forward*/
+				  /*mask in direction bit <5>*/
+				if (loco[m_locoIndex].forward) { speedCode |= 0b00100000; }
+				/*nudge code, will assert max speed in alternate directions until nudge=0*/
+				if (loco[m_locoIndex].nudge > 0) {
+					speedCode = 0x1F;
+					if ((loco[m_locoIndex].nudge & 0x01) == 0x00) { speedCode ^= 0b00100000; }
+					loco[m_locoIndex].nudge--;
+				}
+				/*special case for eStop, need to preserve direction*/
+				if (loco[m_locoIndex].eStopTimer != 0) { speedCode &= 0b00100000; speedCode |= 0x01; }
+				/*set <7-6> = 01*/
+				DCCpacket.data[i] = speedCode | 0b01000000;
+				i++;
+			}
+			/*calc checksum and packet length. i points to checksum byte*/
+			DCCpacket.data[i] = 0;
+			for (DCCpacket.packetLen = 0; DCCpacket.packetLen < i; DCCpacket.packetLen++) {
+				DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
+			}
+			DCCpacket.packetLen++;
+			//will exit with DCCpacket.packetLen set at correct length of i+1
+
+			DCCpacket.doCutout = true;
+
+		} //end zero address test
+
+		  //only advance locoIndex if we don't need to deal with nudge 
+		if (loco[m_locoIndex].nudge == 0) { m_locoIndex++; }
+		if (m_locoIndex >= MAX_LOCO) {
+			m_locoIndex = 0;
+		}
+		//next up is function packet
+		dccSE = DCC_FUNCTION;
+		break;
+
+
+		//2024-11-04 a wierd bug on function group1.  7003 is a long address but we are transmitting only the >>8 part of this
+		//and withought |= 0b11000000
+		//and then 3 is being treated as a long address.
+
+
+	case DCC_FUNCTION:
+		//function packets are controlled by funcIndex and transmit at 1/3rd rate of loco
+	{//block start
+		uint8_t func_Value;
+		uint8_t func_LocoIndex = m_funcIndex / 3;
+
+		if (loco[func_LocoIndex].address != 0) {
+			/*2019-10-08 support long address*/
+			if (loco[func_LocoIndex].useLongAddress) {
+				/*long address format S9.2.1 para 60*/
+				DCCpacket.data[0] = loco[func_LocoIndex].address >> 8;   //upper byte of address
+				DCCpacket.data[0] |= 0b11000000;
+				DCCpacket.data[1] = loco[func_LocoIndex].address & 0x00FF;   //lower byte of address
+				i = 2;
+			}
+			else {
+				DCCpacket.data[0] = (loco[func_LocoIndex].address & 0x7F);
+				i = 1;
+			}
+
+			/*i will point to next data[] element we write to*/
+
+			switch (m_funcIndex % 3) {
+			case 1:
+				/*send a function group 2 packet S-9.2.1 para 270 101SDDDD*/
+				func_Value = (loco[func_LocoIndex].function >> 5) & 0b1111;
+				func_Value |= 0b10110000;
+				break;
+			case 2:
+				/*send a function group 3 packet S-9.2.1 para 270 101SDDDD*/
+				func_Value = (loco[func_LocoIndex].function >> 9) & 0b1111;
+				func_Value |= 0b10100000;
+				break;
+			default:
+				/*send a function group 1 packet S-9.2.1 para 260 100DDDDD*/
+				/*take 5 function bits and move bit 0 to bit 4*/
+				func_Value = loco[func_LocoIndex].function & 0b11111;
+				if (func_Value & 0x01) { func_Value = func_Value | 0b100000; }
+				func_Value = func_Value >> 1;
+				func_Value |= 0b10000000;
+			}
+			DCCpacket.data[i] = func_Value;
+			i++;
+
+			/*calc checksum and packet length. i points to checksum byte*/
+			DCCpacket.data[i] = 0;
+			for (DCCpacket.packetLen = 0; DCCpacket.packetLen < i; DCCpacket.packetLen++) {
+				DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
+			}
+			DCCpacket.packetLen++;
+			/*will exit with DCCpacket.packetLen set at correct length of i+1*/
+
+		}
+
+		/*increment funcIndex and rollover at 3*max_loco. Next up is loco packet*/
+		++m_funcIndex;
+		if (m_funcIndex >= MAX_LOCO * 3) { m_funcIndex = 0; }
+		dccSE = DCC_LOCO;
+	}//block end
+	break;
+
+	case DCC_POM:
+		m_pom.packetCount -= m_pom.packetCount > 0 ? 1 : 0;
+		if (m_pom.packetCount != 0) { break; }
+		/*S9.2.1 configuration variable access instruction, long form. para 375 aka POM
+		addr [1 or 2] 1110CCVV 0 VVVVVVVV 0 DDDDDDDD [checksum] max 6 byte packet.  two packets must
+		be received for the decoder to act. any broadcast or other decoder specific packet in between
+		will cancel the write.  so in theory we write three identical packets and this should work.*/
+
+		//2020-6-17 can also write to accessory 10AAAAAA 0 1AAACDDD address see S9.2.1 para 465
+
+		switch (m_pom.state) {
+
+		case POM_BYTE:
+		case POM_BIT:
+			/*whilst user is editing POM values, keep transmitting loco bytes*/
 			dccSE = DCC_LOCO;
 			break;
 
-		case DCC_IDLE:
+
+		case POM_BYTE_WRITE:
+			//set to repeat packet transmit 4 times
+			m_pom.packetCount = 4;
+			//2020-06-17 add accessory support
+			if (m_pom.useAccessoryAddr) {
+				/*accessory address format S9.2.1 para 420  10AAAAAA 0 1AAACDDD, where CDDD=0000 is the only type
+				supported.  first byte is 6 lsb, second holds 3 msb but inverted.
+				Note that turnouts are grouped in 4 off a single base address.  i.e. addr 1-4 is a single controller
+				addr 5-9 maps to a second.  so if we set CV 7 on  addr 1-4, since we send CDDD=0000 it applies to the
+				whole controller.  whereas it is possible that each turnout has a CV7, and these can be individually addressed
+				only its not done. the controller has one CV7 instance, and if you write 1-4 that single CV7 will be changed.*/
+				DCCpacket.data[0] = m_pom.addr & 0b00111111;
+				DCCpacket.data[0] |= 0b10000000;
+				DCCpacket.data[1] = ~(m_pom.addr >> 1);
+				DCCpacket.data[1] &= 0b01110000;
+				DCCpacket.data[1] |= 0b10000000;
+
+				DCCpacket.data[0] = (m_pom.addr >> 3) & 0b00111111;
+				DCCpacket.data[0] |= 0b10000000;
+				DCCpacket.data[1] = ~(m_pom.addr >> 4);
+				DCCpacket.data[1] &= 0b01110000;
+				DCCpacket.data[1] |= 0b10000000;
+
+				i = 2;
+			}
+			else if (m_pom.useLongAddr) {
+				/*long address format S9.2.1 para 60*/
+				DCCpacket.data[0] = m_pom.addr >> 8;
+				DCCpacket.data[0] |= 0b11000000;
+				DCCpacket.data[1] = m_pom.addr & 0x00FF;
+				i = 2;
+			}
+			else {
+				DCCpacket.data[0] = (m_pom.addr & 0x7F);
+				i = 1;
+			}
+
+			/*CV#1 is transmitted as zero*/
+			DCCpacket.data[i] = (m_pom.cvReg - 1) >> 8;
+			DCCpacket.data[i] |= 0b11101100;  //byte write CC=11
+			i++;
+			DCCpacket.data[i] = (m_pom.cvReg - 1) & 0xFF;
+			i++;
+			DCCpacket.data[i] = m_pom.cvData;
+			i++;
+			/*calc checksum and packet length. i points to checksum byte*/
+			DCCpacket.data[i] = 0;
+			for (DCCpacket.packetLen = 0; DCCpacket.packetLen < i; DCCpacket.packetLen++) {
+				DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
+			}
+			DCCpacket.packetLen++;
+			/*will exit with DCCpacket.packetLen set at correct length of i+1*/
+			m_pom.state = POM_BYTE;
+			break;
+
+
+		case POM_BYTE_READ:  //2024-05-04
+			//2024-11-02 note, S9.2.1 para 375 only defines write bit/byte and verify bit/byte
+			//to read a byte we need to refer to S9.3.2 para 5.1.1 but actually the read 1 byte command is actually the byte verify command with data=0
+
+			//Byte read: addr [1 or 2]  111001VV 0 VVVVVVVV 0 00000000 [checksum] where V=cv
+			//Bit read 
+
+
+			//If railcom is enabled, the decoder can send "operations mode acknowledgment".  See para 495, which refers to S9.3.1(no longer exists) and S9.3.2.(railcom)
+			// except "operations mode acknowledgment" does not appear in that doc.  But see p19 of that doc, POM section, it does define an ACK packet.
+
+			/*findings. you must turn off auto discovery in cv28, as this randomly puts a series of 6 0x0F bytes in ch2.
+			you must turn off broadcast on ch1, because this puts random non 4-8 bytes on the rc cutout
+			you must turn on broadcast on ch2, and here you will see a 2 byte (12 bit) datagram which is the returned ID=0 and cv value
+			and the orientation of the loco seems to affect the ch1 garbage, however the ch2 stuff still reads correclty in either orientation
+			tests also prove that with all the other traffic for loco 6830, such as speed and func, it still responds to POM read correctly.
+			*/
+
+
+
+			trace(Serial.println("pom_byte_read");)
+				m_pom.packetCount = 4;
+			if (false) {
+				//placeholder for accessory read
+			}
+			else if (m_pom.useLongAddr) {
+				/*long address format S9.2.1 para 60*/
+				DCCpacket.data[0] = m_pom.addr >> 8;
+				DCCpacket.data[0] |= 0b11000000;
+				DCCpacket.data[1] = m_pom.addr & 0x00FF;
+				i = 2;
+
+			}
+			else {
+				DCCpacket.data[0] = (m_pom.addr & 0x7F);
+				i = 1;
+			}
+			/*CV#1 is transmitted as zero*/
+			DCCpacket.data[i] = (m_pom.cvReg - 1) >> 8;
+			DCCpacket.data[i++] |= 0b11100100;  //byte verify C=01
+			DCCpacket.data[i++] = (m_pom.cvReg - 1) & 0xFF;
+			DCCpacket.data[i++] = 0;  //send zero in place of a cv value.  This is per S9.3.2 though it contradicts S9.2.1 para 390
+			/*calc checksum and packet length. i points to checksum byte*/
+			DCCpacket.data[i] = 0;
+			for (DCCpacket.packetLen = 0; DCCpacket.packetLen < i; DCCpacket.packetLen++) {
+				DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
+			}
+			DCCpacket.packetLen++;
+			/*will exit with DCCpacket.packetLen set at correct length of i+1*/
+			m_pom.state = POM_BYTE;  //revert to transmitting packets, i.e. this packet gets sent
+
+
+#ifdef _RAILCOM_h
+			nsRailcom::readRailcom(m_pom.addr, m_pom.useLongAddr);
+		
+#endif
+//			nsDCCweb::kissMyAss(m_pom.addr,m_pom.cvReg);
+			
+
+			break;
+
+		case POM_BIT_WRITE:
+			m_pom.packetCount = 4;
+			if (m_pom.useLongAddr) {
+				/*long address format S9.2.1 para 60
+				14bit address, so shift 8 means 6msbit are used*/
+				DCCpacket.data[0] = m_pom.addr >> 8;
+				DCCpacket.data[0] |= 0b11000000;
+				DCCpacket.data[1] = m_pom.addr & 0x00FF;
+				i = 2;
+			}
+			else {
+				DCCpacket.data[0] = (m_pom.addr & 0x7F);
+				i = 1;
+			}
+			/*CV#1 is transmitted as zero*/
+			DCCpacket.data[i] = (m_pom.cvReg - 1) >> 8;
+			DCCpacket.data[i] |= 0b11101000;  //bit manipulation CC=10   
+			i++;
+			DCCpacket.data[i] = (m_pom.cvReg - 1) & 0xFF;
+			i++;
+			/*111CDBBB  C=1 for write, D is the bit value, BBB bit pos para 405*/
+			DCCpacket.data[i] = 0b11110000;  //would be 11100000 for bit verify
+			DCCpacket.data[i] |= (m_pom.cvBit & 0b111);
+			if (m_pom.cvBit >= 128) {
+				DCCpacket.data[i] |= 0b1000;
+			}
+			i++;
+			/*calc checksum and packet length. i points to checksum byte*/
+			DCCpacket.data[i] = 0;
+			for (DCCpacket.packetLen = 0; DCCpacket.packetLen < i; DCCpacket.packetLen++) {
+				DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
+			}
+			DCCpacket.packetLen++;
+			/*will exit with DCCpacket.packetLen set at correct length of i+1*/
+			m_pom.state = POM_BIT;
+			break;
+		}
+
+		//2024-05-06 send a cutout at end of POM packet
+		DCCpacket.doCutout = true;
+
+		break; //end POM case
+
+
+	case DCC_SERVICE:
+		/*service mode, the makes use of a state engine within the cv struct see S9.2.3*/
+		power.serviceMode = true;
+		m_cv.packetCount -= m_cv.packetCount > 0 ? 1 : 0;
+		if (m_cv.packetCount != 0) { break; }
+
+		switch (m_cv.state) {
+		case PG_START:
+			/*PAGED CV ADDRESSING para 205. 3 or more reset packets*/
+			DCCpacket.longPreamble = true;
+			m_cv.packetCount = 10;
+			DCCpacket.data[0] = 0x00;
+			DCCpacket.data[1] = 0x00;
+			DCCpacket.data[2] = 0x00;
+			DCCpacket.packetLen = 3;
+			m_cv.state = PG_PG_WRITE;
+			break;
+
+		case PG_PG_WRITE:
+			m_cv.packetCount = 6;
+			/* 5 or writes to page register
+			 * long-preamble 0 0111CRRR 0 DDDDDDDD 0 EEEEEEEE 1
+			 * C=1 for write RRR=101 for page*/
+			DCCpacket.data[0] = 0b01111101;
+			DCCpacket.data[1] = m_cv.pgPage;
+			DCCpacket.data[2] = DCCpacket.data[0] ^ DCCpacket.data[1];
+			m_cv.state = PG_RESET;
+			break;
+
+		case PG_RESET:
+			/*6 or more reset packets*/
+			m_cv.packetCount = 10;
+			DCCpacket.data[0] = 0x00;
+			DCCpacket.data[1] = 0x00;
+			DCCpacket.data[2] = 0x00;
+			m_cv.state = PG_WRITE;
+			break;
+
+		case PG_WRITE:
+			/*5 or more writes to data register 1-4*/
+			m_cv.packetCount = 6;
+			DCCpacket.data[0] = m_cv.pgReg | 0b01111000;
+			DCCpacket.data[1] = m_cv.cvData;
+			DCCpacket.data[2] = DCCpacket.data[0] ^ DCCpacket.data[1];
+			m_cv.state = PG_RESET_2;
+			break;
+
+		case PG_RESET_2:
+			/* 10 reset packets */
+			m_cv.packetCount = 10;
+			DCCpacket.data[0] = 0x00;
+			DCCpacket.data[1] = 0x00;
+			DCCpacket.data[2] = 0x00;
+			m_cv.state = CV_IDLE;
+			break;
+
+		case D_START:
+			/*DIRECT MODE para 100.  3 or more reset packets*/
+			DCCpacket.longPreamble = true;
+			m_cv.packetCount = 10;
+			DCCpacket.data[0] = 0x00;
+			DCCpacket.data[1] = 0x00;
+			DCCpacket.data[2] = 0x00;
+			DCCpacket.packetLen = 3;
+			m_cv.state = D_WRITE;
+			break;
+
+		case D_WRITE:
+			/*5 or more writes*/
+			m_cv.packetCount = 6;
+			/*Long-preamble 0 0111CCAA 0 AAAAAAAA 0 DDDDDDDD 0 EEEEEEEE 1
+			 *CC=11 for byte write S9.2.3 para 110
+			 *the CV target AAAAAAAAAA target is 0 for CV1, etc
+			 */
+			DCCpacket.data[0] = ((m_cv.cvReg - 1) >> 8) | 0b01111100;
+			DCCpacket.data[1] = (m_cv.cvReg - 1) & 0xFF;
+			DCCpacket.data[2] = m_cv.cvData;
+			DCCpacket.data[3] = DCCpacket.data[0] ^ DCCpacket.data[1] ^ DCCpacket.data[2];
+			DCCpacket.packetLen = 4;
+			m_cv.state = D_RESET;
+			break;
+
+		case D_RESET:
+			/*6 or more write or reset packets*/
+			m_cv.packetCount = 10;
+			DCCpacket.data[0] = 0x00;
+			DCCpacket.data[1] = 0x00;
+			DCCpacket.data[2] = 0x00;
+			DCCpacket.packetLen = 3;
+			m_cv.state = CV_IDLE;
+			break;
+
+		case CV_IDLE:
 			DCCpacket.longPreamble = false;
 			DCCpacket.data[0] = 0xFF;
 			DCCpacket.data[1] = 0x00;
@@ -957,50 +764,205 @@ void dccPacketEngine(void) {
 			DCCpacket.packetLen = 3;
 			break;
 
+		case RD_START:
+			/*for CV read, we will read 8 bits in turn, followed by a byte-read to confirm the
+			inferred byte value is correct.   Means we repeat the verify bit sequence 8 times over
+			with 1 following byte verify.
+			/*DIRECT MODE para 100.  3 or more reset packets*/
 
-		case DCC_ACCESSORY:
-			/* basic packet is  {preamble} 0 10AAAAAA 0 1AAACDDD 0 EEEEEEEE 1, see S-9.2.1 para 420
-			 * For turnouts its effectively an 11 bit address 10AAAAAA 1AAACAAT
-			 * * C is 1 because we activate one half of the pair at the address
-			 * D in <0> (or T in my notation) indicates which half of the pair is activated.
-			 * The most significant bits of the  address are bits <6-4> of the second data byte. By convention these bits in the
-			 * second data byte are in ones complement.  2018-10-02 re-written to fix bugs
-			 * valid UI addresses are 1 through 4096, but 1 effectively maps to 4dec in the address space
-			 * i.e. no one talks about turnouts 1-511 (9bit) with each addressing output 1-4, instead everyone refers
-			 * to a continous range of 1 to 2047 (11bit) in the UI, where the first turnout controller responds to 1-4, the next 5-9 etc
-			 * but you need to be mindful that the controllers 'base address' is in the range 1-511 when you set it up
-			 * i.e. turnout 1 is 00000000100 and turnout 4 is 00000000111 this is not made clear in the specification
-			 */
-			uint16_t a = accessory.address + 3;
-			
-			//2021-01-04 address space is 9 bits followed by 2 bits of device pair id
-			//data[0] is therefore the lsb from a>>2
-			DCCpacket.data[0] = (a >> 2) & 0b111111; //shift and mask in 6 bits
-			DCCpacket.data[0] |= 0b10000000;  //set <7>
-
-			//device identifier is <2-1> of data[1]
-			DCCpacket.data[1] = (a << 1) & 0b00000110;
-			//data[1] <6-4> holds the address msb, i.e. a<10-8> become data[1]<6-4>
-			DCCpacket.data[1] |= (a >> 4) & 0b01110000;
-			//complement bits <6-4>
-			DCCpacket.data[1] ^= 0b01110000;
-			DCCpacket.data[1] |= 0b10001000; //set <7> marker and <3> activate bit
-			
-
-			//if thrown, add 1
-			if (accessory.thrown) DCCpacket.data[1]++;
-
-			DCCpacket.data[2] = DCCpacket.data[0] ^ DCCpacket.data[1];  
+			DCCpacket.longPreamble = true;
+			m_cv.packetCount = 10;
+			DCCpacket.data[0] = 0x00;
+			DCCpacket.data[1] = 0x00;
+			DCCpacket.data[2] = 0x00;
 			DCCpacket.packetLen = 3;
-
-			//2021-1-4 debug dump the packets
-			//Serial.printf("ACC packets %d %d\r\n", DCCpacket.data[0], DCCpacket.data[1]);
-			
-			dccSE = DCC_LOCO;
+			m_cv.state = RD_VERIFY;
 			break;
-						
-		}//end switch
-		
+
+		case RD_VERIFY:  //RD_command
+			/*5 or more verifies*/
+			m_cv.packetCount = 6;
+			/*Long-preamble 0 011110AA 0 AAAAAAAA 0 111KDBBB 0 EEEEEEEE 1
+			Where BBB represents the bit position within the CV (000 being defined as bit 0)
+			and D contains the value of the bit to be verified or written, K=1 write-bit
+			K=0 is verify bit. see S9.2.3 para 130
+			the CV target AAAAAAAAAA target is 0 for CV1, etc
+			 */
+			if (m_cv.bitCount >= 0) {
+				DCCpacket.data[0] = ((m_cv.cvReg - 1) >> 8) | 0b01111000;
+				DCCpacket.data[1] = (m_cv.cvReg - 1) & 0xFF;
+				DCCpacket.data[2] = 0b11101000 | (m_cv.bitCount & 0b111);
+				DCCpacket.data[3] = DCCpacket.data[0] ^ DCCpacket.data[1] ^ DCCpacket.data[2];
+				DCCpacket.packetLen = 4;
+				m_cv.state = RD_RESET;
+			}
+			else {
+				/*byte verify the data we pulled bitwise earlier
+				Long-preamble 0 0111CCAA 0 AAAAAAAA 0 DDDDDDDD 0 EEEEEEEE 1
+				CC=01 Verify byte	*/
+				DCCpacket.data[0] = ((m_cv.cvReg - 1) >> 8) | 0b01110100;
+				DCCpacket.data[1] = (m_cv.cvReg - 1) & 0xFF;
+				DCCpacket.data[2] = (m_cv.cvData & 0xFF);
+				DCCpacket.data[3] = DCCpacket.data[0] ^ DCCpacket.data[1] ^ DCCpacket.data[2];
+				DCCpacket.packetLen = 4;
+				m_cv.state = RD_RESET;
+			}
+			//start looking for ACK pulse. Per the S-9.2.3 para 55, this can occur anytime from the second command packet
+			//onward to end of recovery time.
+			ina219Mode(false);  //kick off a one-time 69mS sample
+
+			break;
+
+		case RD_RESET:
+			/*6 or more reset packets, during which we look for the ACK pulse.  This should occur
+			within the 50mS it takes to issue reset packets. Might it happen sooner during RD_VERIFY?*/
+			m_cv.packetCount = 8;
+			DCCpacket.data[0] = 0x00;
+			DCCpacket.data[1] = 0x00;
+			DCCpacket.data[2] = 0x00;
+			DCCpacket.packetLen = 3;
+			m_cv.state = RD_FINAL;
+			break;
+
+		case RD_FINAL:
+#ifdef USE_ANALOG_MEASUREMENT
+			/*when detecting a 6mS current pulse using the AD converter, this is done outside of this routine
+			on a 1mS sample frequency. This routine won't be called again until the RD_RESET packet has been
+			sent out*/
+#else
+			//read the result of the one-time sample. was 128 samples, and we need one third  of these to be >55mA up-pulse
+			power.ackFlag = ((ina219.getCurrent_mA() - power.ackBase_mA) > 20) ? true : false;
+#endif			
+			//read the ack pulse as sampled, 80mS+ will have passed since RD_RESET entered
+			if (m_cv.bitCount >= 0) {
+				//bits 7 thro to 1
+				m_cv.cvData = m_cv.cvData << 1;
+				if (power.ackFlag) { m_cv.cvData++; }
+				m_cv.bitCount--;
+				m_cv.state = RD_START;
+				//note, if we exit -1 then loop will do a byte verify text next
+				break;
+			}
+			else {
+				//arrive here with -1 and ackFlag true if we have correctly pulled the whole byte
+				if (power.ackFlag) {
+					m_cv.cvData &= 0xFF;
+					trace(Serial.println(F("verify good"));)
+				}
+				else
+				{//byte verify failed, indicate we have unknown value
+					trace(Serial.printf("verify fail %d \n\r", m_cv.cvData);)
+
+						m_cv.cvData = -1;
+				}
+				m_cv.state = CV_IDLE;
+				//exit with _cv.bitCount still at -1
+				//revert to averaging mode
+				ina219Mode(true);
+
+				//2019-12-02 not very elegant, but update display here else it won't happen
+				//unless we code as a timeout elsewhere
+				updateCvDisplay();
+				//2020-12-23 call DCCweb to send a read result over the websocket
+#ifdef _DCCWEB_h
+				trace(Serial.printf("reg %d val %d\n\r", m_cv.cvReg, m_cv.cvData);)
+					nsDCCweb::broadcastReadResult(m_cv.cvReg, m_cv.cvData);
+#endif
+			}
+
+
+		}
+
+		break;
+
+
+	case DCC_ESTOP:
+		//broadcast an eStop packet, set all locos to zero speed. see S=9.2.1 para 50 and para 100
+		DCCpacket.longPreamble = false;
+		DCCpacket.data[0] = 0x00;
+		DCCpacket.data[1] = 0b01000001;
+		DCCpacket.data[2] = 0b01000001;
+		DCCpacket.packetLen = 3;
+
+		//2021-9-1 bug fix
+		//my TCS decoder does not respond to broadcast eStop. my Zen and NCE decoders do
+		//so, send just one eStop broadcast packet and then set all loco slots to eStop 
+		//as belt-and-braces
+		for (auto& loc : loco) {
+			loc.speed = 0;
+			loc.speedStep = 0;
+			//note a non-zero eStopTimer lets the dcc packet engine know to transmit an estop message
+			loc.eStopTimer = LOCO_ESTOP_TIMEOUT;
+			//flag a change so this gets broadcast over all channels
+			loc.changeFlag = true;
+		}
+
+		/*restore any power trip condition*/
+		/*2020-03-29 restore power if it was turned off remotely*/
+
+		if (power.trip || !power.trackPower) {
+			power.bus_mA = 50;  //emulate 50mA and 5v to avoid retriggering a trip from held value
+			power.bus_volts = 5;
+			power.trip = false;
+			power.trackPower = true;
+			ina219Mode(true);  //use averaging mode (trip may have been during SM read)
+		}
+
+		dccSE = DCC_LOCO;
+		break;
+
+	case DCC_IDLE:
+		DCCpacket.longPreamble = false;
+		DCCpacket.data[0] = 0xFF;
+		DCCpacket.data[1] = 0x00;
+		DCCpacket.data[2] = 0xFF;
+		DCCpacket.packetLen = 3;
+		break;
+
+
+	case DCC_ACCESSORY:
+		/* basic packet is  {preamble} 0 10AAAAAA 0 1AAACDDD 0 EEEEEEEE 1, see S-9.2.1 para 420
+		 * For turnouts its effectively an 11 bit address 10AAAAAA 1AAACAAT
+		 * * C is 1 because we activate one half of the pair at the address
+		 * D in <0> (or T in my notation) indicates which half of the pair is activated.
+		 * The most significant bits of the  address are bits <6-4> of the second data byte. By convention these bits in the
+		 * second data byte are in ones complement.  2018-10-02 re-written to fix bugs
+		 * valid UI addresses are 1 through 4096, but 1 effectively maps to 4dec in the address space
+		 * i.e. no one talks about turnouts 1-511 (9bit) with each addressing output 1-4, instead everyone refers
+		 * to a continous range of 1 to 2047 (11bit) in the UI, where the first turnout controller responds to 1-4, the next 5-9 etc
+		 * but you need to be mindful that the controllers 'base address' is in the range 1-511 when you set it up
+		 * i.e. turnout 1 is 00000000100 and turnout 4 is 00000000111 this is not made clear in the specification
+		 */
+		uint16_t a = accessory.address + 3;
+
+		//2021-01-04 address space is 9 bits followed by 2 bits of device pair id
+		//data[0] is therefore the lsb from a>>2
+		DCCpacket.data[0] = (a >> 2) & 0b111111; //shift and mask in 6 bits
+		DCCpacket.data[0] |= 0b10000000;  //set <7>
+
+		//device identifier is <2-1> of data[1]
+		DCCpacket.data[1] = (a << 1) & 0b00000110;
+		//data[1] <6-4> holds the address msb, i.e. a<10-8> become data[1]<6-4>
+		DCCpacket.data[1] |= (a >> 4) & 0b01110000;
+		//complement bits <6-4>
+		DCCpacket.data[1] ^= 0b01110000;
+		DCCpacket.data[1] |= 0b10001000; //set <7> marker and <3> activate bit
+
+
+		//if thrown, add 1
+		if (accessory.thrown) DCCpacket.data[1]++;
+
+		DCCpacket.data[2] = DCCpacket.data[0] ^ DCCpacket.data[1];
+		DCCpacket.packetLen = 3;
+
+		//2021-1-4 debug dump the packets
+		//Serial.printf("ACC packets %d %d\r\n", DCCpacket.data[0], DCCpacket.data[1]);
+
+		dccSE = DCC_LOCO;
+		break;
+
+	}//end switch
+
 
 }  //end of function
 
@@ -1012,90 +974,90 @@ void dccPacketEngine(void) {
 /*select and toggle a turnout.  Only the first 8 slots are available on the hardware UI.
 Also only addresses 1 through 99 can be operated in the UI.
  returns -2 if no change. If turnout was toggled, returns turnout slot modified*/
-int8_t setTurnoutFromKey(KEYPAD &k) {
+int8_t setTurnoutFromKey(KEYPAD& k) {
 	uint8_t i;
-	if (k.key == 27) { m_turnoutSE = TURNOUT_DIGIT_1;return -2; }//estop
-	if (k.key == 28) { m_turnoutSE = TURNOUT_DIGIT_1;return -2; }//mode
+	if (k.key == 27) { m_turnoutSE = TURNOUT_DIGIT_1; return -2; }//estop
+	if (k.key == 28) { m_turnoutSE = TURNOUT_DIGIT_1; return -2; }//mode
 
 	/*Process valid keys, clearing keyFlag and ignore key repeats*/
 	/*keyUp events are also processed*/
 
 	trace(Serial.println(F("setTurnoutFromKey"));)
-	trace(Serial.println(k.key);)
+		trace(Serial.println(k.key);)
 
-	/*handle digit 0-9, and also accept k.key==0*/
-	if ((k.keyASCII >= '0' && k.keyASCII <= '9') || k.key == 0) {
+		/*handle digit 0-9, and also accept k.key==0*/
+		if ((k.keyASCII >= '0' && k.keyASCII <= '9') || k.key == 0) {
 
-		switch (m_turnoutSE) {
+			switch (m_turnoutSE) {
 
-		case TURNOUT_DIGIT_1_WAIT:
-		case TURNOUT_DIGIT_1:
-			if (k.key == 0) {
-				m_turnoutSE = TURNOUT_DIGIT_2_WAIT;
-				break;
-			}
-			trace(Serial.println(F("digit 1"));)
-			m_turnoutEnteredAddress = k.keyASCII - 48;
-			k.requestKeyUp = true;
-			trace(Serial.println(F("requestKeyUp"));)
-			m_turnoutSE = TURNOUT_DIGIT_1;
-			break;
-
-
-		case TURNOUT_DIGIT_2_WAIT:
-		case TURNOUT_DIGIT_2:
-			if (k.key != 0) {
-				/*if no key up, just present the digit, do not process it until user lifts their finger*/
-				trace(Serial.println(F("digit 2"));)
-				m_turnoutEnteredAddress *= 10;
-				m_turnoutEnteredAddress += k.keyASCII - 48;
-				//find selected address, or assign one
-				trace(Serial.println(F("m_turnoutEnteredAddress "));)
-				trace(Serial.print(m_turnoutEnteredAddress, DEC);)
+			case TURNOUT_DIGIT_1_WAIT:
+			case TURNOUT_DIGIT_1:
+				if (k.key == 0) {
+					m_turnoutSE = TURNOUT_DIGIT_2_WAIT;
+					break;
+				}
+				trace(Serial.println(F("digit 1"));)
+					m_turnoutEnteredAddress = k.keyASCII - 48;
 				k.requestKeyUp = true;
-				m_turnoutSE = TURNOUT_DIGIT_2;
+				trace(Serial.println(F("requestKeyUp"));)
+					m_turnoutSE = TURNOUT_DIGIT_1;
+				break;
 
-				if (m_turnoutEnteredAddress == 0) {
-					m_turnoutSE = TURNOUT_DIGIT_1; // 00 is not a valid address
-					return -2;
+
+			case TURNOUT_DIGIT_2_WAIT:
+			case TURNOUT_DIGIT_2:
+				if (k.key != 0) {
+					/*if no key up, just present the digit, do not process it until user lifts their finger*/
+					trace(Serial.println(F("digit 2"));)
+						m_turnoutEnteredAddress *= 10;
+					m_turnoutEnteredAddress += k.keyASCII - 48;
+					//find selected address, or assign one
+					trace(Serial.println(F("m_turnoutEnteredAddress "));)
+						trace(Serial.print(m_turnoutEnteredAddress, DEC);)
+						k.requestKeyUp = true;
+					m_turnoutSE = TURNOUT_DIGIT_2;
+
+					if (m_turnoutEnteredAddress == 0) {
+						m_turnoutSE = TURNOUT_DIGIT_1; // 00 is not a valid address
+						return -2;
+					}
+
+					/*we are done, next step is update UI*/
+					break;
 				}
 
-				/*we are done, next step is update UI*/
+
+				/*saw key-up event. So process the entered address
+				_turnoutEnteredAddress is static and will still hold the address as based on last digit pressed*/
+
+				trace(Serial.println(F("check history"));)
+
+					//2021-02-04 refactored. the returned slot i value is not used
+					i = findTurnout(m_turnoutEnteredAddress);
+
+				/*note no need to assign to zero slots as these will be picked up from the history*/
+				m_turnoutSE = TURNOUT_TOGGLE;
 				break;
-			}
 
+			case TURNOUT_TOGGLE:
+				/* if a numeric is pressed, go back into input mode, but we also need to clear any selected flag */
+				m_turnoutEnteredAddress = k.keyASCII - 48;
+				m_turnoutSE = TURNOUT_DIGIT_1;  //have received a key
+				k.requestKeyUp = true;
 
-			/*saw key-up event. So process the entered address
-			_turnoutEnteredAddress is static and will still hold the address as based on last digit pressed*/
+				for (i = 0; i < 8; i++) { turnout[i].selected = false; }
+				break;
 
-			trace(Serial.println(F("check history"));)
+			}//end switch
 
-				//2021-02-04 refactored. the returned slot i value is not used
-				i = findTurnout(m_turnoutEnteredAddress);
-
-			/*note no need to assign to zero slots as these will be picked up from the history*/
-			m_turnoutSE = TURNOUT_TOGGLE;
-			break;
-
-		case TURNOUT_TOGGLE:
-			/* if a numeric is pressed, go back into input mode, but we also need to clear any selected flag */
-			m_turnoutEnteredAddress = k.keyASCII - 48;
-			m_turnoutSE = TURNOUT_DIGIT_1;  //have received a key
-			k.requestKeyUp = true;
-
-			for (i = 0;i < 8;i++) { turnout[i].selected = false; }
-			break;
-
-		}//end switch
-
-		return -2;
-	}//end 0-9 or key==0 test
+			return -2;
+		}//end 0-9 or key==0 test
 
 	uint8_t r;
 	if (k.keyASCII == '#' && m_turnoutSE == TURNOUT_TOGGLE)
 	{
 		/*find selected turnout, toggle it*/
-		for (i = 0;i < MAX_TURNOUT;i++) {
+		for (i = 0; i < MAX_TURNOUT; i++) {
 			if (turnout[i].selected) {
 				turnout[i].thrown = !turnout[i].thrown;
 
@@ -1108,8 +1070,8 @@ int8_t setTurnoutFromKey(KEYPAD &k) {
 	}
 
 	//2021-01-10 ABCD buttons now perform a direct toggle on slots 0-3
-	if (k.keyASCII >= 'A' &&  k.keyASCII<='D' &&  m_turnoutSE == TURNOUT_TOGGLE) {
-		for (i = 0;i < MAX_TURNOUT;++i) {
+	if (k.keyASCII >= 'A' && k.keyASCII <= 'D' && m_turnoutSE == TURNOUT_TOGGLE) {
+		for (i = 0; i < MAX_TURNOUT; ++i) {
 			turnout[i].selected = false;
 		}
 
@@ -1120,7 +1082,7 @@ int8_t setTurnoutFromKey(KEYPAD &k) {
 		r = i;
 	}
 	return r;
-	
+
 
 }//end func
 
@@ -1133,15 +1095,15 @@ int8_t findTurnout(uint16_t turnoutAddress) {
 	uint8_t age = 0;
 	uint8_t oldestSlot = 0;
 	uint8_t i;
-	uint8_t r;  
+	uint8_t r;
 	/*clear all selected flags, find oldest slot*/
-	for (i = 0;i < MAX_TURNOUT;i++) {
-		if (turnout[i].history > age) { age = turnout[i].history;oldestSlot = i; }
+	for (i = 0; i < MAX_TURNOUT; i++) {
+		if (turnout[i].history > age) { age = turnout[i].history; oldestSlot = i; }
 		turnout[i].selected = false;
 	}
 
 	/*scan addresses, is there a match to an existing slot?*/
-	for (i = 0;i < MAX_TURNOUT;i++) {
+	for (i = 0; i < MAX_TURNOUT; i++) {
 		if (turnout[i].address == turnoutAddress)
 		{
 			turnout[i].selected = true;
@@ -1151,7 +1113,7 @@ int8_t findTurnout(uint16_t turnoutAddress) {
 
 	/*if we fail to find an existing slot, first assign any zero slot*/
 	if (i == MAX_TURNOUT) {
-		for (i = 0;i < MAX_TURNOUT;i++) {
+		for (i = 0; i < MAX_TURNOUT; i++) {
 			if (turnout[i].address == 0) {
 				turnout[i].address = turnoutAddress;
 				//default name is the numeric address
@@ -1161,7 +1123,7 @@ int8_t findTurnout(uint16_t turnoutAddress) {
 			}
 		}
 	}
-	
+
 	/*else assign one based on history, effectively we bump an old slot*/
 	if (i == MAX_TURNOUT) {
 		turnout[oldestSlot].address = turnoutAddress;
@@ -1173,7 +1135,7 @@ int8_t findTurnout(uint16_t turnoutAddress) {
 	}
 
 	/*at this point we always have a slot selected, increment history of all other items*/
-	for (i = 0;i < MAX_TURNOUT;i++) {
+	for (i = 0; i < MAX_TURNOUT; i++) {
 		if (!turnout[i].selected) { turnout[i].history++; }
 		else
 		{
@@ -1282,7 +1244,7 @@ void setPowerFromKey(void) {
 		m_powerDigit = 4;
 		return;
 	}
-	if (keypad.keyASCII<'0' || keypad.keyASCII>'9') { return; }
+	if (keypad.keyASCII < '0' || keypad.keyASCII>'9') { return; }
 	/*accept 0-9 only, set the active digit*/
 	/*powerDigit points to current digit posn*/
 	if (m_powerDigit < 4) {
@@ -1342,7 +1304,7 @@ void setPOMfromKey(void) {
 			return;
 		}
 
-		if (keypad.keyASCII<'0' || keypad.keyASCII>'9') { return; }
+		if (keypad.keyASCII < '0' || keypad.keyASCII>'9') { return; }
 		if (m_pom.digitPos < 4) {
 			changeDigit(keypad.keyASCII, 3 - m_pom.digitPos, &m_pom.cvReg);
 		}
@@ -1382,7 +1344,7 @@ void setPOMfromKey(void) {
 			m_pom.digitPos += m_pom.digitPos < 11 ? 1 : 0;
 			return;
 		}
-		if (keypad.keyASCII<'0' || keypad.keyASCII>'9') { return; }
+		if (keypad.keyASCII < '0' || keypad.keyASCII>'9') { return; }
 		if (m_pom.digitPos < 4) {
 			changeDigit(char(keypad.keyASCII), 3 - m_pom.digitPos, &m_pom.cvReg);
 		}
@@ -1437,18 +1399,18 @@ returns the loco[] array index if successful or -1 otherwise. also
 2020-11-24 updates history value. using uint16 even with one change per second, it will be 18+ hours before
 this counter wraps
 
-2021-1-31 the eStop blocking condition is causing a bug. will force a -1 result and this 
+2021-1-31 the eStop blocking condition is causing a bug. will force a -1 result and this
 in turn will mess up "B" when shifting between locos because the slot is not returned
 do we really need to return -1 if blocking?  where is this used (e.g. stop speed increments)
 */
-int8_t setLoco(LOCO *loc, int8_t speed, bool dir) {
+int8_t setLoco(LOCO* loc, int8_t speed, bool dir) {
 	if (loc == nullptr) return -1;
 	trace(Serial.println(F("\nsetLoco\n"));)
 
-	//estop condition is blocking, meaning no changes to dir or speed
+		//estop condition is blocking, meaning no changes to dir or speed
 		if (loc->eStopTimer == 0) {
 			//find max of history
-			
+
 
 			if (speed > 0) {
 				//incr speed
@@ -1500,14 +1462,15 @@ int8_t setLoco(LOCO *loc, int8_t speed, bool dir) {
 		}
 	//return the slot modified, -1 if its not in the loco array
 	//if eStop was blocking changes, we still need to return the slot
-	for (int i = 0;i < MAX_LOCO;++i) {
+	for (int i = 0; i < MAX_LOCO; ++i) {
 		if (&loco[i] == loc) {
 			//increment history provided this was not an estop event
 			if (speed >= -1) {
 				incrLocoHistory(loc);
 			}
-			return i; }
+			return i;
 		}
+	}
 	return -1;
 
 }
@@ -1518,7 +1481,7 @@ int8_t setLoco(LOCO *loc, int8_t speed, bool dir) {
 where 0 is least significant digit.  can handle 5 digit values
 cannot handle -ve values
 Two overloads, one changes 8 bit ints, the other 16*/
-void changeDigit(char digitASCII, uint8_t digPos, uint8_t *target) {
+void changeDigit(char digitASCII, uint8_t digPos, uint8_t* target) {
 	char buffer[11];
 	/*sprintf ref http://www.cplusplus.com/reference/cstdio/sprintf/
 	returns length of string excluding null terminatior*/
@@ -1530,9 +1493,9 @@ void changeDigit(char digitASCII, uint8_t digPos, uint8_t *target) {
 	*target = atoi(buffer);
 }
 
-void changeDigit(char digitASCII,uint8_t digPos,uint16_t *target) {
+void changeDigit(char digitASCII, uint8_t digPos, uint16_t* target) {
 	char buffer[11];
-	/*sprintf ref http://www.cplusplus.com/reference/cstdio/sprintf/ 
+	/*sprintf ref http://www.cplusplus.com/reference/cstdio/sprintf/
 	returns length of string excluding null terminatior*/
 	uint8_t i = sprintf(buffer, "00000%d", *target);
 	//Serial.println("changeDigit");
@@ -1542,11 +1505,11 @@ void changeDigit(char digitASCII,uint8_t digPos,uint16_t *target) {
 	/*change this digit and return new integer value*/
 	buffer[i] = digitASCII;
 	*target = atoi(buffer);
-	}
+}
 
 
 
-int8_t setFunctionFromKey(KEYPAD &k) {
+int8_t setFunctionFromKey(KEYPAD& k) {
 	/*loco[].function holds 8 bit function values
 	 *key 1-4 relates to loco[0] with msb being the 4, then key5-8 relates to loco[1]
 	 *returns with the index of loco[] which was changed, or -2 if no change
@@ -1587,15 +1550,15 @@ void updatePOMdisplay() {
 	lcd.setCursor(0, 1);
 
 	char buffer[20];
-		if (m_pom.state == POM_BYTE) {
-		
-		if (m_pom.useAccessoryAddr){
+	if (m_pom.state == POM_BYTE) {
+
+		if (m_pom.useAccessoryAddr) {
 			//2020-06-17 added accessory POM support
 			sprintf(buffer, "%04d-%03d  A%05d", m_pom.cvReg, m_pom.cvData, m_pom.addr);
 		}
 		else if (m_pom.useLongAddr) {
 			//0000-000  L00000
-			sprintf(buffer, "%04d-%03d  L%05d", m_pom.cvReg,m_pom.cvData,m_pom.addr);
+			sprintf(buffer, "%04d-%03d  L%05d", m_pom.cvReg, m_pom.cvData, m_pom.addr);
 		}
 		else {
 			sprintf(buffer, "%04d-%03d  S%05d", m_pom.cvReg, m_pom.cvData, m_pom.addr);
@@ -1617,28 +1580,29 @@ void updatePOMdisplay() {
 	}
 	else if (m_pom.state == POM_BIT)
 	{/*display binary 1234-b1-0 S12345*/
-			if (m_pom.useLongAddr) {
-				sprintf(buffer, "%04d-b%d-%d L%05d", m_pom.cvReg, (m_pom.cvBit & 0b111), (m_pom.cvBit >> 7),m_pom.addr);
-			}else{
-				sprintf(buffer, "%04d-b%d-%d S%05d", m_pom.cvReg, (m_pom.cvBit & 0b111), (m_pom.cvBit >> 7), m_pom.addr);
-			}
-			lcd.print(buffer);
-			/*set cursor 1024-b2-1 L10239*/
-			if (m_pom.digitPos < 4) {
-				lcd.setCursor(m_pom.digitPos, 1);
-			}
-			else if (m_pom.digitPos == 4) {
-				lcd.setCursor(m_pom.digitPos + 2, 1);
-			}
-			else if (m_pom.digitPos == 5) {
-				lcd.setCursor(m_pom.digitPos + 3, 1);
-			}
-			else
-			{
-				/*address*/
-				lcd.setCursor(m_pom.digitPos + 4, 1);
-			}
-			lcd.blink();
+		if (m_pom.useLongAddr) {
+			sprintf(buffer, "%04d-b%d-%d L%05d", m_pom.cvReg, (m_pom.cvBit & 0b111), (m_pom.cvBit >> 7), m_pom.addr);
+		}
+		else {
+			sprintf(buffer, "%04d-b%d-%d S%05d", m_pom.cvReg, (m_pom.cvBit & 0b111), (m_pom.cvBit >> 7), m_pom.addr);
+		}
+		lcd.print(buffer);
+		/*set cursor 1024-b2-1 L10239*/
+		if (m_pom.digitPos < 4) {
+			lcd.setCursor(m_pom.digitPos, 1);
+		}
+		else if (m_pom.digitPos == 4) {
+			lcd.setCursor(m_pom.digitPos + 2, 1);
+		}
+		else if (m_pom.digitPos == 5) {
+			lcd.setCursor(m_pom.digitPos + 3, 1);
+		}
+		else
+		{
+			/*address*/
+			lcd.setCursor(m_pom.digitPos + 4, 1);
+		}
+		lcd.blink();
 
 	}
 
@@ -1682,16 +1646,16 @@ void updateUNIdisplay() {
 	lcd.noBlink();
 	lcd.home();
 	char buffer[20];
-	
+
 	if (unithrottle.locPtr == nullptr) {
 		lcd.write("nullptr");
 		trace(Serial.println(F("UNI nullptr"));)
-		return;
+			return;
 	}
 
-	trace(Serial.printf("updateUNIdisplay %d\n",unithrottle.locPtr->address);)
+	trace(Serial.printf("updateUNIdisplay %d\n", unithrottle.locPtr->address);)
 
-	//one sec toggle alt display
+		//one sec toggle alt display
 		if (power.trip) {
 			//2021-10-22 overcurrent or overvolt trip?
 			if (power.bus_mA >= bootController.currentLimit) {
@@ -1704,23 +1668,23 @@ void updateUNIdisplay() {
 		else if (power.trackPower == false) {
 			strcpy(buffer, "TRACK POWER OFF ");
 		}
-		//add brake and service here
-		else if(unithrottle.locPtr->brake)	{
+	//add brake and service here
+		else if (unithrottle.locPtr->brake) {
 			sprintf(buffer, "BRAKE     %04dmA", (int)power.bus_mA);
 		}
 
 
-	else {
-			//display address and current level
-		if (unithrottle.locPtr->useLongAddress) {
-			sprintf(buffer, "LOC:%05d %04dmA", unithrottle.locPtr->address, (int)power.bus_mA);
-		}
 		else {
-			sprintf(buffer, "LOC:%03d   %04dmA", unithrottle.locPtr->address, (int)power.bus_mA);
+			//display address and current level
+			if (unithrottle.locPtr->useLongAddress) {
+				sprintf(buffer, "LOC:%05d %04dmA", unithrottle.locPtr->address, (int)power.bus_mA);
+			}
+			else {
+				sprintf(buffer, "LOC:%03d   %04dmA", unithrottle.locPtr->address, (int)power.bus_mA);
+			}
+
+
 		}
-		
-		
-	}
 	lcd.print(buffer);
 	memset(buffer, '\0', sizeof(buffer));
 
@@ -1732,7 +1696,7 @@ void updateUNIdisplay() {
 	else {
 		sprintf(buffer, "F:%02d   012345678", unithrottle.locPtr->speedStep);
 	}
-	
+
 	if (unithrottle.locPtr->shunterMode == 0) {
 		buffer[0] = unithrottle.locPtr->forward ? 0x01 : 0x02;
 	}
@@ -1740,12 +1704,12 @@ void updateUNIdisplay() {
 		//use solid direction arrows in shunter mode
 		buffer[0] = unithrottle.locPtr->forward ? 0x05 : 0x06;
 	}
-	
+
 	//now assert function states.  012345678 if active, a digit will be replaced with a dot
 	uint16_t f = unithrottle.locPtr->function;
-	for (uint8_t i = 0;i < 9;++i) {
+	for (uint8_t i = 0; i < 9; ++i) {
 		if ((f & (1 << i)) != 0) {
-			buffer[i+7] = 0x04;  //solid dot
+			buffer[i + 7] = 0x04;  //solid dot
 		}
 	}
 	lcd.print(buffer);
@@ -1763,15 +1727,15 @@ void updateUNIdisplay() {
 			//LOC:003
 			lcd.setCursor(6 - unithrottle.digitPos, 0);
 		}
-	//	Serial.println("\n++blink++\n\n");
-		//lcd.cursor();
+		//	Serial.println("\n++blink++\n\n");
+			//lcd.cursor();
 		lcd.blink();
 	}
 
 
 }
 
-	
+
 /*turnout display will show _2 for first digit and 2_ for second */
 /*only supports first 8 turnouts on screen, irrespecive of MAX_TURNOUT*/
 void updateTurnoutDisplay(void) {
@@ -1779,7 +1743,7 @@ void updateTurnoutDisplay(void) {
 	uint8_t i;
 	char temp[20];
 	lcd.home();
-	/* old version 
+	/* old version
 	for (i = 0;i < 8;i++) {
 		if (turnout[i].thrown) {
 			sprintf(temp, "%02d/ ", turnout[i].address);
@@ -1793,7 +1757,7 @@ void updateTurnoutDisplay(void) {
 	}
 	*/
 
-	for (i = 0;i < 8;i++) {
+	for (i = 0; i < 8; i++) {
 		//any address over 100 will be shown as hex, any address over 255 will be shown as XX
 		if (turnout[i].address > 0xFF) {
 			strcpy(temp, "XX| ");
@@ -1842,7 +1806,7 @@ void updateTurnoutDisplay(void) {
 	case TURNOUT_TOGGLE:
 		/*find selected item and set cursor posn*/
 
-		for (i = 0;i < 8;i++) {
+		for (i = 0; i < 8; i++) {
 			if (turnout[i].selected) {
 				lcd.setCursor(y, (i / 4));
 				break;
@@ -1854,7 +1818,7 @@ void updateTurnoutDisplay(void) {
 	}//end switch
 
 	lcd.blink();
-	   
+
 }//end
 
 //how do we arrange a call back to update after timeout?  possibly a call from .ino when it hits zero?
@@ -1876,15 +1840,15 @@ void updateCvDisplay(void) {
 	lcd.setCursor(0, 1);
 	/*2019-12-01 if data==-1 then display ??? as its not valid*/
 	if (m_cv.cvData >= 0) {
-		sprintf(buffer, "%04d-%03d  %03d/%02d", m_cv.cvReg, m_cv.cvData,m_cv.pgPage,m_cv.pgReg);
+		sprintf(buffer, "%04d-%03d  %03d/%02d", m_cv.cvReg, m_cv.cvData, m_cv.pgPage, m_cv.pgReg);
 		//0000-000  00/00
-		}
+	}
 	else {
 		//failed read of cv values
 		sprintf(buffer, "%04d-???  failed", m_cv.cvReg);
 	}
 	lcd.print(buffer);
-	
+
 	/*set active digit*/
 	if (m_cv.digit < 4) {
 		lcd.setCursor(m_cv.digit, 1);
@@ -1906,12 +1870,12 @@ void dccGetSettings() {
 	EEPROM.get(eeAddr, bootController);
 	if (defaultController.softwareVersion != bootController.softwareVersion) {
 		/*need to re-initiatise eeprom with factory defaults*/
-		EEPROM.put(0,defaultController);
+		EEPROM.put(0, defaultController);
 		eeAddr += sizeof(bootController);
 		//2021-10-07 when doing a factory reset, only load loco 3
-		for (int i = 0;i < MAX_LOCO;++i) {
+		for (int i = 0; i < MAX_LOCO; ++i) {
 			//loco[i].address = (i <MAX_LOCO )? i+3  : 0;
-			loco[i].address = (i ==0) ? i + 3 : 0;
+			loco[i].address = (i == 0) ? i + 3 : 0;
 			loco[i].useLongAddress = false;
 		}
 		//other settings such as defaults for 28 steps and longAddr are defined in the struct itself
@@ -1944,7 +1908,7 @@ void dccGetSettings() {
 		t.thrown = false;
 	}
 
-	
+
 	/*initiailise UNIthrottle*/
 	loco[0].jog = true;
 	unithrottle.locPtr = &loco[0];
@@ -1956,7 +1920,7 @@ void dccGetSettings() {
 
 	//trace dump the eeprom size used
 	trace(Serial.printf("GETsettings loco %d, turnout %d, bytes %d\r\n ", sizeof(loco), sizeof(turnout), eeAddr);)
-		
+
 }
 
 /*Call dccPutSettings if user changes a loco addr, short/long or step-size, or at system level they change current trip*/
@@ -1973,17 +1937,17 @@ void dccPutSettings() {
 
 	EEPROM.commit();
 	bootController.isDirty = false;
-	trace(Serial.printf("EEPROM commit, bytes %d\r\n",eeAddr);)
+	trace(Serial.printf("EEPROM commit, bytes %d\r\n", eeAddr);)
 }
 
 
 void DCCcoreBoot() {
-			
+
 	//2022-01-08 pinMode for PIN_HEARTBEAT, and PIN_JOG_xx now handled in Jogwheel cpp
 
-	
+
 #ifdef PIN_ESTOP
-		pinMode(PIN_ESTOP, INPUT_PULLUP); //pull low to signal Emergency Stop
+	pinMode(PIN_ESTOP, INPUT_PULLUP); //pull low to signal Emergency Stop
 #endif	
 
 
@@ -2069,7 +2033,7 @@ void DCCcoreBoot() {
 	/*INA219 current sensor*/
 	ina219.begin();  // Initialize first board (default address 0x40)
 	ina219Mode(true); //modify ina config to do 8.5mS averaged samples
-	
+
 }
 
 /*+++ CORE DCC ROUTINE, CALL FROM MAIN LOOP +++
@@ -2081,13 +2045,13 @@ void DCCcoreBoot() {
 
 /*core machine processing, called from the INO loop*/
 int8_t DCCcore(void) {
-	
+
 	/*every 10mS as flagged from DCClayer1 as DCCpacket.msTickFlag, run keyscans and processing*/
 	int8_t r = -2;  //default return value
-		if (DCCpacket.msTickFlag) {
+	if (DCCpacket.msTickFlag) {
 		DCCpacket.msTickFlag = false;
-		
-	
+
+
 		//scan jogwheel
 		nsJogWheel::jogWheelScan();
 
@@ -2113,7 +2077,7 @@ int8_t DCCcore(void) {
 		//process I2C keypad key value if we have one
 		if (keypad.keyFlag) {
 			keypad.keyFlag = false;
-			
+
 			//estop always performs an eStop, and this is how you exit M_TRIP
 			//note that local estop key also performs same function 
 			//2020-6-14 except when in boot mode.  in which case eStop will set max current at 250mA
@@ -2123,7 +2087,7 @@ int8_t DCCcore(void) {
 					bootController.currentLimit = 250;
 					lcd.setCursor(0, 1);  //col-row both zero indexed
 					lcd.print("250mA mode set  ");
-		
+
 					//there is no protected mode as such, its just that we have override the user current limit
 					//and set 250mA  which is the service mode current limit.  Even if user trips this and resets
 					//250mA will still be set.
@@ -2134,27 +2098,27 @@ int8_t DCCcore(void) {
 					//also proper service mode sends idle not all loco slot data
 				}
 				else {
-				//regular eStop processing
-				lcd.home();
-				lcd.print(F("!EMERGENCY STOP!"));
-				Serial.println(F("!EMERGENCY STOP!"));
-				m_machineSE = M_ESTOP;
-				m_stateLED = L_ESTOP;
-				//call out to the e stop routine, will broadcast and estop signal and zero all individual locos
-				m_generalTimer = 16;
-				dccSE = DCC_ESTOP;
-				r = 127;
+					//regular eStop processing
+					lcd.home();
+					lcd.print(F("!EMERGENCY STOP!"));
+					Serial.println(F("!EMERGENCY STOP!"));
+					m_machineSE = M_ESTOP;
+					m_stateLED = L_ESTOP;
+					//call out to the e stop routine, will broadcast and estop signal and zero all individual locos
+					m_generalTimer = 16;
+					dccSE = DCC_ESTOP;
+					r = 127;
 				}
 			}
 
 
 			//key-press related changes to local machine state engine
 			switch (m_machineSE) {
-				
+
 			case M_UNI_SET:
-			//assigns a new loco or updates an existing one
+				//assigns a new loco or updates an existing one
 			{//scope block M_UNI_SET. to avoid crosses-initialization-error in the compiler
-				
+
 				bool checkAddress = false;
 
 				if (keypad.key == KEY_MODE) {
@@ -2173,27 +2137,27 @@ int8_t DCCcore(void) {
 						m_generalTimer = 12;
 
 						//find the active loco in-use on the display
-						LOCO *active = nullptr;
-						for (auto &loc : loco) {
-							if (loc.jog) {active = &loc; break;}
+						LOCO* active = nullptr;
+						for (auto& loc : loco) {
+							if (loc.jog) { active = &loc; break; }
 						}
 
-						if (active == nullptr) { lcd.print("error 7");break; }
+						if (active == nullptr) { lcd.print("error 7"); break; }
 						trace(Serial.printf("active %d", active->address);)
-						//can we delete existing loco?
-						if ((active->consistID!=0)||(active->speed!=0)){
-							lcd.clear();
-							lcd.print("Loco in use     ");
-							lcd.setCursor(0, 1);
-							lcd.print("cannot delete   ");
+							//can we delete existing loco?
+							if ((active->consistID != 0) || (active->speed != 0)) {
+								lcd.clear();
+								lcd.print("Loco in use     ");
+								lcd.setCursor(0, 1);
+								lcd.print("cannot delete   ");
 
-							//abandon delete, return to active loco
-							unithrottle.locPtr = active;
-							m_machineSE = M_UNI_RUN;
-							break;
-						}
-						
-						
+								//abandon delete, return to active loco
+								unithrottle.locPtr = active;
+								m_machineSE = M_UNI_RUN;
+								break;
+							}
+
+
 						//proceed with delete
 						active->address = 0;
 						memset(active->name, '\0', sizeof(active->name));
@@ -2206,9 +2170,9 @@ int8_t DCCcore(void) {
 						bootController.isDirty = true;
 						dccPutSettings();
 						trace(Serial.printf("addr is clear %d", active->address);)
-						
-						//find next loco and point at it
-						unithrottle.locPtr=getNextLoco(unithrottle.locPtr);
+
+							//find next loco and point at it
+							unithrottle.locPtr = getNextLoco(unithrottle.locPtr);
 						m_machineSE = M_UNI_RUN;
 						bootController.flagLocoRoster = true;
 						//updateUNIdisplay();  //don't update now
@@ -2231,10 +2195,11 @@ int8_t DCCcore(void) {
 							lcd.clear();
 							lcd.print("No slots free");
 							//we need to abandon edit mode and return to active loco
-							for (auto &loc : loco) {
-								if (loc.jog) { 
+							for (auto& loc : loco) {
+								if (loc.jog) {
 									unithrottle.locPtr = &loc;
-									break; }
+									break;
+								}
 							}
 
 							m_machineSE = M_UNI_RUN;
@@ -2244,18 +2209,18 @@ int8_t DCCcore(void) {
 						{
 							//write back to the appropriate loco slot as user may have changed speed steps
 							//in the editor
-							for (auto &loc : loco) {
+							for (auto& loc : loco) {
 								loc.jog = false;
 							}
 
 
 							//are we changing the slot address?
 							//2021-7-8 special case check theSlot is not a blank slot
-							if ((strcmp(existing, buffer) == 0) && (loco[theSlot].address!=0)){
+							if ((strcmp(existing, buffer) == 0) && (loco[theSlot].address != 0)) {
 								//selecting existing loco. preserve address, function and consistID
 								lcd.clear();
 								lcd.print("Loco updated");
-								
+
 								//we picked up the loco details when we entered address.
 								//user might have changed the speed steps though, so recalculate.
 								loco[theSlot].use128 = m_tempLoco.use128;
@@ -2284,8 +2249,8 @@ int8_t DCCcore(void) {
 								incrLocoHistory(&loco[theSlot]);
 
 								trace(Serial.printf("overwrt %d\n", loco[theSlot].address);)
-								//write to eeprom
-								bootController.isDirty = true;  //pending write
+									//write to eeprom
+									bootController.isDirty = true;  //pending write
 								bootController.flagLocoRoster = true;
 							}
 							//execute eeprom write
@@ -2295,11 +2260,11 @@ int8_t DCCcore(void) {
 							unithrottle.locPtr->jog = true;
 
 							m_machineSE = M_UNI_RUN;
-							
+
 
 						}
 						trace(Serial.printf("UNI write to slot %d", theSlot);)
-						
+
 
 					}//end of scope block 2
 
@@ -2377,34 +2342,34 @@ int8_t DCCcore(void) {
 					buffer[0] = m_tempLoco.useLongAddress ? 'L' : 'S';
 					//2021-07-8 ignore empty slots. If we don't find an exact match we continue building
 					//the address in m_tempLoco
-					int8_t theSlot = findLoco(buffer, existing,true);
+					int8_t theSlot = findLoco(buffer, existing, true);
 					trace(Serial.printf("checkAddress %d", theSlot);)
-					if (theSlot != -1) {
-						//are we selecting an existing slot or overwriting one?
-						if (strcmp(buffer, existing) == 0) {
-							m_tempLoco = loco[theSlot];
+						if (theSlot != -1) {
+							//are we selecting an existing slot or overwriting one?
+							if (strcmp(buffer, existing) == 0) {
+								m_tempLoco = loco[theSlot];
+							}
+							//else do nothing, we stick with m_tempLoco as is
+							updateUNIdisplay();
 						}
-						//else do nothing, we stick with m_tempLoco as is
-						updateUNIdisplay();
-					}
-					else {
-						//this is the case for a blank slot as -1 is the return value
-						//reset certain params
-						trace(Serial.println(F("checkAddress reset"));)
-						m_tempLoco.consistID = 0;
-						m_tempLoco.function = 0;
-						m_tempLoco.speed = 0;
-						m_tempLoco.speedStep = 0;
-						m_tempLoco.jog = false;
-						memset(m_tempLoco.name, '\0', sizeof(m_tempLoco.name));
-					}
+						else {
+							//this is the case for a blank slot as -1 is the return value
+							//reset certain params
+							trace(Serial.println(F("checkAddress reset"));)
+								m_tempLoco.consistID = 0;
+							m_tempLoco.function = 0;
+							m_tempLoco.speed = 0;
+							m_tempLoco.speedStep = 0;
+							m_tempLoco.jog = false;
+							memset(m_tempLoco.name, '\0', sizeof(m_tempLoco.name));
+						}
 				}
 
 			}//end of scope block M_UNI_SET
 			break;
 
 
-			case M_UNI_RUN: 
+			case M_UNI_RUN:
 				//2020-10-07 long-mode-press takes us to M_POM, short to M_TURNOUT
 
 				if (keypad.key == 0) {
@@ -2425,19 +2390,19 @@ int8_t DCCcore(void) {
 				}
 
 				//2020-10-07 otherwise process the key
-							   
+
 				//reset general timer for a current update
 				m_generalTimer = 12;
-				
+
 				if (unithrottle.locPtr == &m_tempLoco) {
 					m_machineSE = M_UNI_SET;
 					unithrottle.digitPos = unithrottle.locPtr->useLongAddress ? 4 : 2;
 					trace(Serial.println(F("invoke editor"));)
-					updateUNIdisplay;
+						updateUNIdisplay;
 					break;
 				}
-				if (unithrottle.locPtr == nullptr) unithrottle.locPtr= getNextLoco(unithrottle.locPtr);
-				
+				if (unithrottle.locPtr == nullptr) unithrottle.locPtr = getNextLoco(unithrottle.locPtr);
+
 
 				//* inc speed, 0 dec, # rev, D lamp
 				//1-8 are direct function keys
@@ -2475,7 +2440,7 @@ int8_t DCCcore(void) {
 				}//end scope block
 				break;
 
-				case 'B':		
+				case 'B':
 				{//scope block ADVANCE
 					if (keypad.keyHeld) break;
 					//step through all available locos
@@ -2492,15 +2457,15 @@ int8_t DCCcore(void) {
 						//and have a WDT timeout. To protect against this, we will fail out of the loop
 						//after a couple of cycles, pointing at an empty slot
 						//the UNI_RUN code should then force the UI into editor mode
-						
-						for (int fail = 0;fail < MAX_LOCO + 1;++fail) {
+
+						for (int fail = 0; fail < MAX_LOCO + 1; ++fail) {
 							thisLoco++;
 							if (thisLoco == MAX_LOCO) thisLoco = 0;
 							if (loco[thisLoco].address != 0) break;
 						}
-											   
+
 						//exits with next non-zero address selected, or a zero address if all slots are zero
-						for (auto &loc : loco) {
+						for (auto& loc : loco) {
 							loc.jog = false;
 						}
 						loco[thisLoco].jog = true;
@@ -2528,7 +2493,7 @@ int8_t DCCcore(void) {
 						//normally a speed increase
 						setLoco(unithrottle.locPtr, 1, false);
 						break;
-						}
+					}
 					else {
 						//in shunter mode, we might need to decr instead
 						setLoco(unithrottle.locPtr, unithrottle.locPtr->shunterMode, false);
@@ -2536,7 +2501,7 @@ int8_t DCCcore(void) {
 						if (unithrottle.locPtr->speed == 0) {
 							unithrottle.locPtr->shunterMode = 1;
 							setLoco(unithrottle.locPtr, 0, true);  //flip direction
-						}			
+						}
 					}
 					break;
 				case '0':
@@ -2571,12 +2536,12 @@ int8_t DCCcore(void) {
 
 				//eStop key is code 18
 				if (keypad.key == 18) {
-					setLoco(unithrottle.locPtr, -2, false);				
+					setLoco(unithrottle.locPtr, -2, false);
 				}
-				
+
 				//direct function control
 				if ((keypad.keyASCII >= '1') && (keypad.keyASCII <= '8')) {
-					uint8_t k = keypad.keyASCII - '1' ;
+					uint8_t k = keypad.keyASCII - '1';
 					unithrottle.locPtr->function ^= (0b10 << k);
 					unithrottle.locPtr->functionFlag = true;
 				}
@@ -2586,7 +2551,7 @@ int8_t DCCcore(void) {
 
 				//if we made a speed/dir change, check jog is set
 				if ((unithrottle.locPtr->changeFlag) && (!unithrottle.locPtr->jog)) {
-					for (auto &loc : loco) {
+					for (auto& loc : loco) {
 						loc.jog = false;
 					}
 					unithrottle.locPtr->jog = true;
@@ -2617,7 +2582,7 @@ int8_t DCCcore(void) {
 
 					m_machineSE = M_UNI_RUN;
 					updateUNIdisplay();
-					} 
+				}
 				else {
 					/*2019-12-02 fix to problem with CV-verify. we kick off ACK monitor but then burn up
 					cycles with update cvDisplay.  so fix is have setCVfromKey return bool and only update if true*/
@@ -2652,7 +2617,7 @@ int8_t DCCcore(void) {
 				//exit with mode button, we arrived here because of mode-held so ignore this
 				if (keypad.keyHeld) { break; }
 				if (keypad.key == KEY_MODE) {
-					
+
 					m_machineSE = M_UNI_RUN;
 					updateUNIdisplay();
 
@@ -2673,7 +2638,7 @@ int8_t DCCcore(void) {
 					dccSE = DCC_LOCO;  //return to loco packet transmission
 					m_machineSE = M_UNI_RUN;
 					updateUNIdisplay();
-				}  
+				}
 				else {
 					setPOMfromKey();
 					updatePOMdisplay();
@@ -2684,7 +2649,7 @@ int8_t DCCcore(void) {
 
 		}//end keyflag
 
-		
+
 		//2019-10-10 check jogwheel activity
 		if (jogWheel.jogEvent || jogWheel.jogButtonEvent) {
 			//jogwheel related changes to local machine state engine
@@ -2692,15 +2657,15 @@ int8_t DCCcore(void) {
 			case M_UNI_RUN:
 				m_generalTimer = 10;
 				//2020-07-05 for unithrottle we need to trigger a display refresh
-			
+
 			//2020-06-14 allow jog to control loco during turnout mode and function mode
 			case M_TURNOUT:
-			
-								
+
+
 				r = setLocoFromJog(jogWheel);
 
 				//2020-05-03 flag a change for broadcasting, UI update to follow
-				if (r >= 0) { 
+				if (r >= 0) {
 					loco[r].changeFlag = true;
 					//modifying a single loco that is in a WiThrottle consist is handled here
 					replicateAcrossConsist(r);
@@ -2713,12 +2678,12 @@ int8_t DCCcore(void) {
 		//potentially a long-push could reverse direction or apply a nudge
 		switch (m_machineSE) {
 			///only act if we are in loco operate mode, don't need to consider the button event status
-		
-			case M_TURNOUT:  //added 2020-10-07
-			case M_UNI_RUN:
-				for (auto& loc : loco) {
-					if (loc.jog) loc.brake = jogWheel.jogButton;
-				}
+
+		case M_TURNOUT:  //added 2020-10-07
+		case M_UNI_RUN:
+			for (auto& loc : loco) {
+				if (loc.jog) loc.brake = jogWheel.jogButton;
+			}
 		}
 
 
@@ -2731,7 +2696,7 @@ int8_t DCCcore(void) {
 			for (auto& loc : loco) {
 				loc.eStopTimer -= loc.eStopTimer == 0 ? 0 : 1;
 			}
-			
+
 			//countdown cv timeout. repaint display as we hit zero
 			if (m_cv.timeout > 0) {
 				m_cv.timeout--;
@@ -2747,10 +2712,10 @@ int8_t DCCcore(void) {
 			//the jogWheel routines
 			++m_ledCount;
 			if (m_ledCount >= 8) { m_ledCount = 0; }
-			if ((m_stateLED & (1 << m_ledCount)) == 0) { 
+			if ((m_stateLED & (1 << m_ledCount)) == 0) {
 				jogWheel.pinState = HIGH;
 			}
-			else { 
+			else {
 				jogWheel.pinState = LOW;
 			}
 
@@ -2758,29 +2723,29 @@ int8_t DCCcore(void) {
 			//timer event driven machine state
 			if (m_generalTimer > 0) {
 				m_generalTimer--;
-			
+
 				if (m_generalTimer == 0)
 				{//hit zero
 					switch (m_machineSE) {
 					case M_BOOT:
 						//enable track power, then measure quiescent current
 						trace(Serial.println(F("enable power"));)
-						power.trackPower = true;
+							power.trackPower = true;
 						//assume quiescent power is say 250mA,this gets adjusted downward as the unit sees
 						//real readings come in
 						power.quiescent_mA = 250;
 						//2021-10-22 clear bus_volts
-						power.bus_volts = 0; 
-						
+						power.bus_volts = 0;
+
 						///2020-10-07 we boot in M_UNI_RUN
 						m_machineSE = M_UNI_RUN;
 						m_stateLED = L_NORMAL;
 						updateUNIdisplay();
-						
+
 						//2020-06-14 if user pressed mode during boot or estop, then boot in limited current mode.
 						//this is handled above in the key routines
 						break;
-											   
+
 					case M_ESTOP:
 						m_machineSE = M_UNI_RUN;
 						//2020-01-26 return to processing loco packets
@@ -2806,19 +2771,19 @@ int8_t DCCcore(void) {
 		do not update the reading if we have a trip condition, wish to preserve the peak current on the display
 		if the INA is not present, bus volts will read as 32v or higher*/
 
-		 /*NOTE: to reset a power trip, press ESTOP, it will clear the trip on exit
-			alternatively cycle power through JSON WiThrottle*/
-		
-		//still within the 10mS tick calls
+		/*NOTE: to reset a power trip, press ESTOP, it will clear the trip on exit
+		   alternatively cycle power through JSON WiThrottle*/
+
+		   //still within the 10mS tick calls
 		if (power.trip == false) {
 			/*implement a rolling average weighing of 0.2, this gives 90% of final value in 10 samples
-			i.e. a 100mS response to overloads*/					
+			i.e. a 100mS response to overloads*/
 
 #ifdef USE_ANALOG_MEASUREMENT
-		//Analoge measurement exponentially smooths readings into the bus_mA value.
-			power.ADresult = int(power.ADresult*0.8 + 0.2*analogRead(A0));
+			//Analoge measurement exponentially smooths readings into the bus_mA value.
+			power.ADresult = int(power.ADresult * 0.8 + 0.2 * analogRead(A0));
 			power.bus_mA = ANALOG_SCALING * power.ADresult;
-					
+
 #else
 			//INA based measurement
 			power.bus_volts = ina219.getBusVoltage_V();
@@ -2827,43 +2792,43 @@ int8_t DCCcore(void) {
 			//Its short-protection feature seems to act very quickly and limit the current to about 1.5A which sustains
 			//the short and won't trigger a 2A trip.
 			//If we apply exponential smoothing, the 2A overload is correctly captured, which is counter intuitive.
-			power.bus_mA = (ina219.getCurrent_mA()*0.2) + 0.8*power.bus_mA;
+			power.bus_mA = (ina219.getCurrent_mA() * 0.2) + 0.8 * power.bus_mA;
 #endif
-								   
+
 			if (power.bus_mA < power.quiescent_mA) { power.quiescent_mA = power.bus_mA; }
-				
+
 			//Power trip condition present?
 			if (power.serviceMode) {
-				if (power.bus_mA - power.quiescent_mA > 250) { 
+				if (power.bus_mA - power.quiescent_mA > 250) {
 					Serial.print(F("Service Mode power trip "));
-					power.trip = true; 
-					}
+					power.trip = true;
+				}
 			}
-			else if (power.bus_mA > bootController.currentLimit) {  
-					Serial.print(F("Current trip "));
-					Serial.println(power.bus_mA, DEC);
-					power.trip = true;  
-					}
+			else if (power.bus_mA > bootController.currentLimit) {
+				Serial.print(F("Current trip "));
+				Serial.println(power.bus_mA, DEC);
+				power.trip = true;
+			}
 
 			//look for over-voltage condition
 			if (power.bus_volts > bootController.voltageLimit) {
 				Serial.print(F("Voltage trip "));
-				power.trip = true; 
+				power.trip = true;
 			}
 
 
 			//2021-10-12 did we just trip the power?  If so signal that trackPower is now off 
 			//and broadcast ths to the WiThrottles
-			
-			if (power.trip)	{
+
+			if (power.trip) {
 				power.trackPower = false;
 #ifdef _WITHROTTLE_h
 				nsWiThrottle::broadcastPower();
 				trace(Serial.println("TRIP bcast");)
 #endif
-			}			   
+			}
 		}   //end of power trip monitoring
-	
+
 
 	}//end msTickFlag, 10mS
 
@@ -2883,11 +2848,11 @@ int8_t DCCcore(void) {
 		power.ackFlag = false;
 		break;
 	case RD_FINAL:
-	//sample at 1mS, we don't look for a sustained 60mA for 6mS pulse, the first high sample will do
+		//sample at 1mS, we don't look for a sustained 60mA for 6mS pulse, the first high sample will do
 		if (!DCCpacket.fastTickFlag) break;
-			DCCpacket.fastTickFlag = false;
-			if (power.ackFlag) break;
-			if ((analogRead(A0) * ANALOG_SCALING) > (power.ackBase_mA + 60)) {power.ackFlag = true;}
+		DCCpacket.fastTickFlag = false;
+		if (power.ackFlag) break;
+		if ((analogRead(A0) * ANALOG_SCALING) > (power.ackBase_mA + 60)) { power.ackFlag = true; }
 	}
 	//m.cv reverts to CV_IDLE when done
 #endif
@@ -2906,7 +2871,7 @@ void ina219Mode(boolean Avg) {
 			INA219_CONFIG_SADCRES_12BIT_16S_8510US |
 			INA219_CONFIG_MODE_SANDBVOLT_CONTINUOUS;
 
-			//INA219_CONFIG_SADCRES_12BIT_8S_4260US
+		//INA219_CONFIG_SADCRES_12BIT_8S_4260US
 	}
 	else
 	{	//For Service Mode ACK detection. Use one time trigger mode, setting 68mS with 128 samples, shunt only.
@@ -2918,10 +2883,10 @@ void ina219Mode(boolean Avg) {
 			INA219_CONFIG_GAIN_8_320MV | INA219_CONFIG_BADCRES_12BIT |
 			INA219_CONFIG_SADCRES_12BIT_128S_69MS |
 			INA219_CONFIG_MODE_SVOLT_TRIGGERED;
-			   
+
 
 		//Only sample the shunt voltage, because sampling both this and the bus will half the effective rate on both.
-			
+
 		//INA219_CONFIG_MODE_SANDBVOLT_CONTINUOUS;
 		//INA219_CONFIG_MODE_SANDBVOLT_TRIGGERED
 		//INA219_CONFIG_SADCRES_12BIT_16S_8510US
@@ -2951,7 +2916,7 @@ or from the local hardware interface
 void updateLocalMachine(void) {
 
 	bool doUpdate = false;
-	for (auto &loc : loco) {
+	for (auto& loc : loco) {
 		if (loc.changeFlag) {
 			doUpdate = true;
 			loc.changeFlag = false;
@@ -2962,7 +2927,7 @@ void updateLocalMachine(void) {
 			loc.functionFlag = false;
 		}
 	}
-	for (auto &turn : turnout) {
+	for (auto& turn : turnout) {
 		if (turn.changeFlag) {
 			doUpdate = true;
 			/*2020-05-18 queue transmission to line*/
@@ -2971,7 +2936,7 @@ void updateLocalMachine(void) {
 			dccSE = DCC_ACCESSORY;
 			/*transmit one at a time*/
 			turn.changeFlag = false;
-			break;		
+			break;
 		}
 	}
 
@@ -3004,12 +2969,12 @@ void updateLocalMachine(void) {
 /*2020-06-25 and reverse direction on stationary if jog button held*/
 /*2020-10-10 we now no longer have a 4-up display, so jogwheel is always associated with uni_loco.  Added shunter support*/
 
-int8_t setLocoFromJog(nsJogWheel::JOGWHEEL &j) {
+int8_t setLocoFromJog(nsJogWheel::JOGWHEEL& j) {
 	/*returns index of loco[] modified, or -2 if no changes made*/
 	/*which loco has the jog assigned?*/
-	
+
 	uint8_t i;
-	for (i = 0;i < MAX_LOCO;i++) {
+	for (i = 0; i < MAX_LOCO; i++) {
 		if (loco[i].jog) { break; }
 	}
 
@@ -3034,7 +2999,7 @@ int8_t setLocoFromJog(nsJogWheel::JOGWHEEL &j) {
 
 	if (j.jogEvent) {
 		//2020-10-10 follow jogCW unless shunter is -1 and in which case invert
-		if (loco[i].shunterMode == -1) {j.jogCW = !j.jogCW;}
+		if (loco[i].shunterMode == -1) { j.jogCW = !j.jogCW; }
 
 		if (j.jogCW) {
 			/*increment speed for clockwise rotation*/
@@ -3063,11 +3028,11 @@ int8_t setLocoFromJog(nsJogWheel::JOGWHEEL &j) {
 		//2020-10-10 if have hit zero, and we are in shunter mode, flip the direction and
 		//the shuntermode flag
 
-		if ((loco[i].shunterMode !=0)&&(loco[i].speedStep==0)) { 
+		if ((loco[i].shunterMode != 0) && (loco[i].speedStep == 0)) {
 			loco[i].forward = !loco[i].forward;
 			loco[i].shunterMode = loco[i].shunterMode == 1 ? -1 : 1;
 		}
-			   
+
 		/*recalc the float speed value. C++ will give an int result for an integer divisor, hence need to express divisor
 		 as a double to force floating point math*/
 		if (loco[i].use128) {
@@ -3076,7 +3041,7 @@ int8_t setLocoFromJog(nsJogWheel::JOGWHEEL &j) {
 		else {
 			loco[i].speed = loco[i].speedStep / 28.0;
 		}
-		
+
 		j.jogEvent = false;
 	}
 
@@ -3100,35 +3065,35 @@ void replicateAcrossConsist(int8_t slot) {
 	if (slot<0 || slot > MAX_LOCO) return;
 	if (loco[slot].consistID == 0) return;
 
-	for (int i = 0;i < MAX_LOCO;++i) {
+	for (int i = 0; i < MAX_LOCO; ++i) {
 		if (i == slot) continue;
 		if (loco[i].consistID != loco[slot].consistID) continue;
-			/*replicate*/
-			if (loco[slot].changeFlag) {
-				/*replicate speed*/
-		//DEBUG
-				trace(Serial.printf("consist %d replicate %d to %d", loco[i].consistID, slot, i);)
+		/*replicate*/
+		if (loco[slot].changeFlag) {
+			/*replicate speed*/
+	//DEBUG
+			trace(Serial.printf("consist %d replicate %d to %d", loco[i].consistID, slot, i);)
 				loco[i].speed = loco[slot].speed;
-				loco[i].changeFlag = true;
-				//calculate the speed-step value from the percentile value
-				if (loco[i].use128) {
-					loco[i].speedStep=int(0.05 + (loco[i].speed * 126));
-				}
-				else {
-					loco[i].speedStep = int(0.05 + (loco[i].speed * 28));
-				}		
-				
-				/*direction is more complex, if it has indeed changed, then we need to toggle all other locos*/
-				if (loco[slot].directionFlag) {
-					/*toggle, do not set absolute*/
-					loco[i].forward = !loco[i].forward;
-				}
+			loco[i].changeFlag = true;
+			//calculate the speed-step value from the percentile value
+			if (loco[i].use128) {
+				loco[i].speedStep = int(0.05 + (loco[i].speed * 126));
 			}
-			if (loco[slot].functionFlag) {
-				loco[i].function = loco[slot].function;
-				loco[i].functionFlag = true;
+			else {
+				loco[i].speedStep = int(0.05 + (loco[i].speed * 28));
 			}
-		
+
+			/*direction is more complex, if it has indeed changed, then we need to toggle all other locos*/
+			if (loco[slot].directionFlag) {
+				/*toggle, do not set absolute*/
+				loco[i].forward = !loco[i].forward;
+			}
+		}
+		if (loco[slot].functionFlag) {
+			loco[i].function = loco[slot].function;
+			loco[i].functionFlag = true;
+		}
+
 	}
 
 }
@@ -3140,58 +3105,44 @@ void replicateAcrossConsist(int8_t slot) {
 //the cv register value passed is +1 compared to actual value, e.g. reg 23 passed is 22 in the memory space
 //val is B23 S0 C2 where the instruction is byte, set, clear for bits
 //2024-05-04 add R23 to read register 23 for example
+bool writePOMcommand(const char* addr, uint16_t cv, const char* val) {
 
-
-
-
-
-/// <summary>
-/// 2024-11-13 update, feed with incoming websocket values to initiate a POM action
-/// </summary>
-/// <param name="addr">L8888 or S3 for example</param>
-/// <param name="cv">cv numeric</param>
-/// <param name="val">val numeric for bytes or S5,C3 etc for bits</param>
-/// <param name="action">byteR,byteW,bitW</param>
-/// <returns>true if command initiated</returns>
-bool writePOMcommand(const char *addr, uint16_t cv, const char *val, const char *action) {
-	
-	if (action == nullptr) return false;
 	if (addr == nullptr) return false;
 	if (val == nullptr) return false;
-	
-	//BUG if you change cvReg on the same loco, byteR returns the old value of last cvReg  on the first read, then the actual cvReg requested on second.  why?
-	
+
 	m_pom.useLongAddr = addr[0] == 'L' ? true : false;
 	m_pom.addr = atoi(addr + 1);
 	if (m_pom.addr == 0) return false;
+
 
 	if (cv == 0 || cv > 1024) return false;
 	//POM processing code remaps 1 to 0 on the line.
 	m_pom.cvReg = cv;
 
-	//what action to take
-	if (strcmp(action, "byteW") == 0) {
-		m_pom.cvData = atoi(val);
+
+
+	switch (val[0]) {
+	case 'B':
+		m_pom.cvData = atoi(val + 1);
 		m_pom.state = POM_BYTE_WRITE;
-	}
-	else if(strcmp(action, "byteR") == 0) {
-		m_pom.cvData = 0;
+		break;
+
+	case 'R':  //2024-05-04
+		m_pom.cvData = atoi(val + 1);
 		m_pom.state = POM_BYTE_READ;
-		}
-	else if (strcmp(action, "bitW") == 0) {
-		//cvVal has a S|C prefix e.g. S3, C4
+		break;
+
+	case 'S':
+	case 'C':
+		//bit write. cvBit <2-0> represent the bit posn, <7> represents set or clear
+		//the val string will be b21 where b<7-0><1|0>
 		m_pom.cvBit = (val[1] - '0') & 0b111;
 		m_pom.cvBit += val[0] == 'S' ? 0b10000000 : 0;
 		m_pom.state = POM_BIT_WRITE;
-	}
-	else {
-		return false;
-	}
 
-
+	}
 	//initiate write sequence
-	dccSE = DCC_POM;  
-
+	dccSE = DCC_POM;
 	//we do not set m_pom.timeout as we don't want to update local display for this remote operation
 	//m_pom.timeout = 8;
 	return true;
@@ -3213,11 +3164,11 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool verify, bool enterS
 	//https://github.com/esp8266/Arduino/issues/4689
 
 	if (enterSM) {
-			if (power.serviceMode) return true;
+		if (power.serviceMode) return true;
 		//process an eStop on all locos
-		for (auto &loc : loco) {
+		for (auto& loc : loco) {
 			//setLoco(&loc, -1, true);
-		
+
 		}
 		//this will take around 100mS to execute, we immediately go into service mode which will result in 
 		//idle being sent to line and a 250mA current limit which we might trip if several locos were running at
@@ -3239,12 +3190,12 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool verify, bool enterS
 		dccSE = DCC_LOCO;
 		return true;
 	}
-	
-	
+
+
 
 	if (!verify) {
 		//initiate Direct write
-		
+
 		if (cvReg > 1024)return false;
 		//for service mode, cv is display location, i.e. 1 to 1024
 		m_cv.cvReg = cvReg;
@@ -3259,7 +3210,7 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool verify, bool enterS
 		m_cv.state = D_START;
 		return true;
 		//after processing the machine reverts to m_cv.state=CV_IDLE
-		
+
 
 	}
 	else {
@@ -3269,7 +3220,7 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool verify, bool enterS
 
 		//free to read?
 		if (m_cv.state != CV_IDLE) return false;
-			//initate a read
+		//initate a read
 		m_cv.timeout = 8;  //2 sec
 		//set up entry conditions, including capturing the bus current
 		power.ackBase_mA = power.bus_mA;
@@ -3291,24 +3242,24 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool verify, bool enterS
 //ignoreEmpty will not attempt to bump a slot
 //the routine is passive, it does not actually overwrite any slot
 //2021-2-4 merge and refactor from wiT
-int8_t findLoco(char *address, char *slotAddress, bool ignoreEmpty) {
+int8_t findLoco(char* address, char* slotAddress, bool ignoreEmpty) {
 	bool useLong = (address[0] == 'L') ? true : false;
 	if (slotAddress != NULL) { memset(slotAddress, '\0', sizeof(slotAddress)); }
 	if (address == nullptr) return -1;
-	
+
 
 	int8_t i;
 	char buf[8];
-	trace(Serial.printf("findLoc addr=%s S/L=%d\n", address,useLong);)
-	strcpy(buf, address + 1);  //ignore leading S/L on the address
+	trace(Serial.printf("findLoc addr=%s S/L=%d\n", address, useLong);)
+		strcpy(buf, address + 1);  //ignore leading S/L on the address
 
 	//do not match a zero address
 	//Refactor: WiT did not check for zero address, but it never expected to receive one
-	if (atoi(buf) ==0) return -1;
-	
+	if (atoi(buf) == 0) return -1;
+
 
 	//match exactly on address and short/long
-	for (i = 0;i < MAX_LOCO;i++) {
+	for (i = 0; i < MAX_LOCO; i++) {
 		if ((loco[i].address == atoi(buf)) && (loco[i].useLongAddress == useLong)) {
 			if (slotAddress != NULL) {
 				sprintf(slotAddress, "S%d", loco[i].address);
@@ -3323,24 +3274,24 @@ int8_t findLoco(char *address, char *slotAddress, bool ignoreEmpty) {
 	if (ignoreEmpty) return -1;
 	trace(Serial.println("fL2");)
 
-	//or take an empty slot
-	for (i = 0;i < MAX_LOCO;i++) {
-		if (loco[i].address == 0) {
-			//2021-10-02 zero-slot bug fix. Don't attempt to write to slotAddress if it is null
-			//otherwise, copy address to slotAddress
-			trace(Serial.println("#2");)
-			if (slotAddress != NULL) strcpy(slotAddress, address);
-			return i;
+		//or take an empty slot
+		for (i = 0; i < MAX_LOCO; i++) {
+			if (loco[i].address == 0) {
+				//2021-10-02 zero-slot bug fix. Don't attempt to write to slotAddress if it is null
+				//otherwise, copy address to slotAddress
+				trace(Serial.println("#2");)
+					if (slotAddress != NULL) strcpy(slotAddress, address);
+				return i;
+			}
 		}
-	}
 
 	trace(Serial.println("fL3");)
-	//refactor: bump logic carried from WiT
-	//2020-11-25 new slot bump logic, look for oldest stationary loco that has no consistID
-	int8_t bump = -1;
+		//refactor: bump logic carried from WiT
+		//2020-11-25 new slot bump logic, look for oldest stationary loco that has no consistID
+		int8_t bump = -1;
 	uint16_t age = 0xFFFF;
 
-	for (i = 0;i < MAX_LOCO;i++) {
+	for (i = 0; i < MAX_LOCO; i++) {
 		if ((loco[i].speed == 0) && (loco[i].consistID == 0)) {
 			//possible bump candidate, but check its the oldest, i.e. lowest history value
 			if (loco[i].history < age) {
@@ -3364,7 +3315,7 @@ int8_t findLoco(char *address, char *slotAddress, bool ignoreEmpty) {
 
 //returns the next loco in the roster (given pointer to current one) or if there are none it will 
 //generate a default loco at address 3 and point to this
-LOCO * getNextLoco(LOCO *loc) {
+LOCO* getNextLoco(LOCO* loc) {
 	//Note, *loc is a copy of the pointer, you cannot modify the pointer value (i.e. point at a new location)
 	//so rather than the complex **loc pointer to a pointer syntax, its easier to make it  return value
 	loc->jog = false;
@@ -3373,17 +3324,17 @@ LOCO * getNextLoco(LOCO *loc) {
 	int8_t thisLoco = setLoco(unithrottle.locPtr, 0, false);
 	if ((thisLoco == -1) || (thisLoco >= MAX_LOCO)) {
 		//cannot find a match, so point at last loco slot so that next will return first
-		thisLoco = MAX_LOCO-1;
+		thisLoco = MAX_LOCO - 1;
 	}
 
 	//advance to next non-zero slot. To avoid a stuck-loop and WDT timeout fail after MAX_LOCO attempts
-	for (int fail = 0;fail < MAX_LOCO;++fail) {
+	for (int fail = 0; fail < MAX_LOCO; ++fail) {
 		thisLoco++;
 		if (thisLoco == MAX_LOCO) thisLoco = 0;
 		if (loco[thisLoco].address != 0) break;
 	}
 	loc = &loco[thisLoco];
-	
+
 	//if the slot address is zero, means all slots must be zero so create loco S3
 	if (loc->address == 0) {
 		loc->address = 3;
@@ -3403,7 +3354,7 @@ LOCO * getNextLoco(LOCO *loc) {
 
 //increase the history of this loc in the loco[] array
 //2020-09-01
-void incrLocoHistory(LOCO *loc) {
+void incrLocoHistory(LOCO* loc) {
 	uint16_t age = 0;
 	for (auto h : loco) {
 		if (h.history > age) { age = h.history; }
