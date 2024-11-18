@@ -19,13 +19,13 @@ namespace nsRailcom {
 
 	void railcomInit();
 	void railcomLoop(void);
-	void railcomLoop2(void);
+	void railcomLoopTEST(void);
 
 	void readRailcom(uint16_t addr, bool useLongAddr);
 
 	/*local scope*/
-	static bool decodeRailcom(uint8_t inByte, uint8_t* dataOut);
-	static bool decodeRailcom(uint8_t* inByte);
+	static bool decodeRailcom(uint8_t inByte, uint8_t* dataOut, bool ignoreControlChars);
+	static bool decodeRailcom(uint8_t* inByte, bool ignoreControlChars);
 
 }
 

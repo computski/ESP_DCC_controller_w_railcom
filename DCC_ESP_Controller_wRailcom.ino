@@ -139,7 +139,7 @@ void loop() {
 
 	//2024-08-28 dump incoming railcom over websocket
 #ifdef _RAILCOM_h
-	nsRailcom::railcomLoop();
+	nsRailcom::railcomLoopTEST();
 #endif
 
 

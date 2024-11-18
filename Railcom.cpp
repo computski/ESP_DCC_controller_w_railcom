@@ -34,6 +34,9 @@
 * I found that if I reversed the track polarity, I can reliably read cv5.   This is confusing because I could see it on the PicoScope but perhaps its just enough
 * out of spec that the system cannot read it.  But this does not explain why it hangs and never sends a WS response.
 * 
+* wierd with the L298, the ESU cv8 consistently reads as 134 (wrong) or, if polarity is reversed it reads 151 (correct).  The PICO scope correctly decodes as A969
+* but the ESP must be reading it differently.  but how?  the edges look about the same, and its consistently reading two 4/8 codes to get 134.
+* 
 */
 
 
@@ -57,7 +60,8 @@ struct RC_MSG {
 	bool    useLongAddr;
 	uint8_t payload;
 	bool	isValid;
-	
+	uint8_t b1;
+	uint8_t b2;
 }rc_msg;
 
 enum RC_STATE
@@ -86,8 +90,11 @@ void nsRailcom::railcomInit() {
 	rc_msg.state = RC_EXPECT_ID0;
 }
 
-
-void nsRailcom::railcomLoop2(void) {
+/// <summary>
+/// Debug use. Continuously monitors the serial port for 2-byte datagrams and outputs these over a websocket when seen.
+/// Use: ensure you disable StartRailcom with an immediate return clause.
+/// </summary>
+void nsRailcom::railcomLoopTEST(void) {
 	//DEBUG USE
 	uint8_t byteNew;
 	uint8_t	byteCount = 0;
@@ -98,12 +105,15 @@ void nsRailcom::railcomLoop2(void) {
 
 			switch (rc_msg.state) {
 			case RC_EXPECT_BYTE:
-				if (decodeRailcom(&byteNew)) {
+				rc_msg.b2 = byteNew;
+				if (decodeRailcom(&byteNew,true)) {
 					rc_msg.payload += (byteNew & 0b00111111);
 					JsonDocument out;
 					out["type"] = "railcom";
+					char buff[6];
+					out["b1"] = itoa(rc_msg.b1, buff, 16);
+					out["b2"] = itoa(rc_msg.b2, buff, 16);
 					out["payload"] = rc_msg.payload;
-					out["count"] = DCCpacket.railcomPacketCount;
 					out["flag"] = DCCpacket.railcomCutoutActive;
 					nsDCCweb::sendJson(out);
 				}
@@ -115,12 +125,12 @@ void nsRailcom::railcomLoop2(void) {
 			
 
 			default:
-				if (decodeRailcom(&byteNew)) {
+				rc_msg.b1 = byteNew;
+				if (decodeRailcom(&byteNew,true)) {
 					if ((byteNew & 0b00111100) == 0) {
 						//found ID0
 						rc_msg.payload = byteNew << 6;
 						rc_msg.state = RC_EXPECT_BYTE;
-						DCCpacket.railcomPacketCount = 10;
 						break;
 					}
 				}
@@ -148,7 +158,7 @@ void nsRailcom::railcomLoop(void) {
 
 		switch (rc_msg.state) {
 		case RC_EXPECT_BYTE:
-			if (decodeRailcom(&byteNew)) {
+			if (decodeRailcom(&byteNew,true)) {
 				rc_msg.payload += (byteNew & 0b00111111);
 				JsonDocument out;
 				out["type"] = "dccUI";
@@ -168,7 +178,7 @@ void nsRailcom::railcomLoop(void) {
 
 
 		default:
-			if (decodeRailcom(&byteNew)) {
+			if (decodeRailcom(&byteNew,true)) {
 				if ((byteNew & 0b00111100) == 0) {
 					//found ID0
 					rc_msg.payload = byteNew << 6;
@@ -181,14 +191,13 @@ void nsRailcom::railcomLoop(void) {
 
 		}
 
-		//saftey valve,  process max 60 bytes before giving control back to main loop
-		if (byteCount++ > 60) break;
+		//saftey valve,  process max 20 bytes before giving control back to main loop
+		if (byteCount++ > 20) break;
 	}
 
 
-	//timedout?
-	//on the start and append status we might timeout
-
+	//timed out?
+	
 	if (DCCpacket.railcomPacketCount == 0) {
 		switch (rc_msg.state) {
 		case RC_SUCCESS:
@@ -236,7 +245,7 @@ don't intend to use it to read loco ids from ch1
 void nsRailcom::readRailcom(uint16_t addr, bool useLongAddr) {
 	rc_msg.locoAddr = addr;
 	rc_msg.useLongAddr = useLongAddr;
-	rc_msg.state = RC_EXPECT_ID0;
+//	rc_msg.state = RC_EXPECT_ID0;   //for debug, don't modify current state
 	rc_msg.isValid = false;
 	DCCpacket.railcomPacketCount = 80;
 
@@ -250,26 +259,34 @@ void nsRailcom::readRailcom(uint16_t addr, bool useLongAddr) {
 }
 
 
-bool nsRailcom::decodeRailcom(uint8_t inByte, uint8_t* dataOut) {
+bool nsRailcom::decodeRailcom(uint8_t inByte, uint8_t* dataOut, bool ignoreControlChars) {
 	for (int i = 0; i <= RC_BUSY; i++) {
 		if (inByte == decode[i]) {
 			//valid
 			*dataOut = i;
 			return true;
 		}
+		if (ignoreControlChars && (i >= 0x3F)) return false;
 	}
 	//didn't find a match
 	*dataOut = 0;
 	return false;
 }
 
-bool nsRailcom::decodeRailcom(uint8_t *inByte) {
+/// <summary>
+/// decode inbound data against the 4/8 decode table, overwriting inByte with its decoded value
+/// </summary>
+/// <param name="inByte">4/8 coded serial data inbound, overwritten with decoded value</param>
+/// <param name="ignoreControlChars">ignore ACK, NACK, BUSY and only return data values</param>
+/// <returns>true if decode successful</returns>
+bool nsRailcom::decodeRailcom(uint8_t *inByte,bool ignoreControlChars) {
 	for (int i = 0; i <= RC_BUSY; i++) {
 		if (*inByte == decode[i]) {
 			//valid
 			*inByte = i;
 			return true;
 		}
+		if (ignoreControlChars && (i >= 0x3F)) return false;
 	}
 	//didn't find a match
 	
