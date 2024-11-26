@@ -35,6 +35,15 @@
 
 
 
+#include <splash.h>
+#include <Adafruit_SSD1306.h> //added 2024-11-26 for latest adafruit INA support
+#include <Adafruit_NeoPixel.h> //added 2024-11-26 for latest adafruit INA support
+#include <SocketIOclient.h>  //added 2024-11-26, also updated library to ver 2.6.1 from 2.4.0
+#include <WebSockets.h>
+#include <WebSockets4WebServer.h>
+#include <WebSocketsClient.h>
+#include <WebSocketsServer.h>
+#include <WebSocketsVersion.h>
 #include <ArduinoJson.h>
 #include <ArduinoJson.hpp>
 #include <Wire.h>
@@ -139,7 +148,7 @@ void loop() {
 
 	//2024-08-28 dump incoming railcom over websocket
 #ifdef _RAILCOM_h
-	nsRailcom::railcomLoopTEST();
+	nsRailcom::railcomLoop();
 #endif
 
 

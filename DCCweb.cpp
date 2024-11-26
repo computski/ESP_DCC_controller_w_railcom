@@ -298,6 +298,7 @@ void nsDCCweb::sendJson(JsonDocument out) {
 	char payload[800];
 	serializeJson(out, payload, sizeof(payload));
 	webSocket->broadcastTXT(payload);
+
 }
 
 
@@ -946,17 +947,6 @@ void nsDCCweb::broadcastPower(void) {
 	out["V_limit"] = bootController.voltageLimit;
 
 	sendJson(out);
-}
-
-
-void nsDCCweb::kissMyAss(uint16_t addr,uint8_t reg) {
-	JsonDocument out2;
-	out2["type"] = "railcom";
-	out2["comment"] = "read";
-	out2["addr"] = addr;
-	out2["reg"] = reg;
-	sendJson(out2);
-
 }
 
 

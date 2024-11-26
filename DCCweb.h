@@ -32,7 +32,6 @@ namespace nsDCCweb {
 	void broadcastChanges(void);
 	void sendJson(JsonObject& out);   //needs to be visible to railcom routines
 	void sendJson(JsonDocument out);
-	void kissMyAss(uint16_t addr, uint8_t reg);
 
 
 	static void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length);
