@@ -109,7 +109,7 @@ DCCcoreBoot();
 
 	/*2024-08-28 start railcom protocol*/
 #ifdef _RAILCOM_h
-	nsRailcom::railcomInit();    
+	//nsRailcom::railcomInit();    
 #endif
 
 

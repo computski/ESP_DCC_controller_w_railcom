@@ -108,15 +108,17 @@ enum POMstate {
 	POM_BYTE_WRITE,
 	POM_BIT,
 	POM_BIT_WRITE,
-	POM_BYTE_READ
+	POM_BYTE_READ,
+	POM_BIT_READ
 };
 
 struct POM {
 	uint16_t addr = 3;
 	bool    useLongAddr;
 	bool	useAccessoryAddr;  //added 2020-06-17
+	bool	readSuccess =true;	//added 2024-12-02
 	uint16_t cvReg = 29;
-	uint8_t  cvData = 128;
+	uint8_t  cvData = 128;  
 	uint8_t	 cvBit = 0; //<7> is the bit value, <0-2> the bit pos
 	uint8_t digitPos;
 	uint8_t	state = POM_BYTE;
@@ -214,7 +216,7 @@ void dccPutSettings();
 bool writePOMcommand(const char* addr, uint16_t cv, const char* val);
 bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool verify, bool enterSM, bool exitSM);
 float getVolt();  //debug
-
+void railComPostback(uint8_t result, bool success);
 
 //debug
 void debugTurnoutArray(void);
@@ -228,11 +230,11 @@ static int8_t setTurnoutFromKey(KEYPAD& k);
 static int8_t setFunctionFromKey(KEYPAD& k);
 static void changeDigit(char digitASCII, uint8_t digPos, uint8_t* target);
 static void changeDigit(char digitASCII, uint8_t digPos, uint16_t* target);
-static bool setCVfromKey(void);
+static bool setSMfromKey(void);
 
 //display related
 static void updateTurnoutDisplay(void);
-static void updateCvDisplay(void);
+static void updateSMdisplay(void);
 static void updateUNIdisplay();
 
 //jogwheel related

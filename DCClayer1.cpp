@@ -172,7 +172,6 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 		case DCC_CUTOUT_START:
 			WRITE_PERI_REG(&timer->frc1_load, ticksCutoutStart);
 			//this is a pseudo start to a new 1 bit, we high akin to _H on the other bit types
-			DCCpacket.railcomCutoutActive = true;
 			
 			if (brake_mask == 0) {
 				//L298 and BT2 devices
@@ -230,8 +229,7 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 		case DCC_CUTOUT_END:
 			WRITE_PERI_REG(&timer->frc1_load, ticksCutoutEnd);
 			//this is a pseudo end of a bit, assert a low-half of a bit
-			DCCpacket.railcomCutoutActive = false;
-
+		
 			if (brake_mask == 0) {
 				//output a pseudo low part of bit
 		#ifdef PIN_RAILCOM_SYNC

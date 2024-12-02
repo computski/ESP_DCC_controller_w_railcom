@@ -6,6 +6,7 @@
 //dependencies
 #include "DCCweb.h"
 #include "DCClayer1.h"
+#include "DCCcore.h"
 
 /*debug notes
 * we see bytes if JP1 is in place.  if JP1 is removed, the bytes stop.
@@ -39,6 +40,7 @@
 * 
 */
 
+//we need a callback to DCCcore, the railcom value has to update itself there somehow...
 
 
 
@@ -68,7 +70,6 @@ struct RC_MSG {
 	uint16_t locoAddr;
 	bool    useLongAddr;
 	uint8_t payload;
-	bool	isValid;
 #ifdef DEBUG_RC
 	uint8_t buffer[RC_BUFF_LEN];
 	uint8_t bufferIdx;
@@ -84,39 +85,25 @@ enum RC_STATE
 };
 
 
-
 /// <summary>
 /// Initialise UART for railcom, start listening for incoming data
 /// </summary>
 void nsRailcom::railcomInit() {
 	Serial.println(F("\n\nEnable railcom"));
 	Serial.flush();
-
 	readRailcom(0, false);
-
 	Serial.end();
 	//railcom uses 250kbaud
 	Serial.begin(250000);
-
-
 	rc_msg.state = RC_EXPECT_ID0;
-
 	
 }
 
-//2024-11-26 bug. It appears the serial routine is getting overloaded and crashing the ESP.  if you unplug the serial jump, it is stable
-//at the moment you plug it back in, the ESP will crash.  Just touching R5 outside leg is enough to crash the ESP.  Touching the resistor adds a ton
-//more edges to the comparator signal and I think this is overloading the serial routine.
-//but surely the serial chip will just go into overflow/ frame error etc and it should be able to recover.  maybe the arduino handler causes it to raise an int
-//and this is overloading the system?
-// https://forum.arduino.cc/t/serial-port-input-causes-arduino-to-crash/653103
-//TEST: do nothing ignore serial.  touch R5 and you see lots of bogus info but it does not crash the ESP.  which means that either the act of reading it
-//or my processing thereafter causes a crash
 
 
 
 /// <summary>
-/// Debug use. Continuously monitors the serial port for 2-byte datagrams and outputs these over a websocket when seen.
+/// Debug. Continuously monitors the serial port for 2-byte datagrams and outputs these over a websocket when seen.
 /// Use: ensure you disable StartRailcom with an immediate return clause.
 /// </summary>
 void nsRailcom::railcomLoopDebug(void) {
@@ -125,16 +112,7 @@ void nsRailcom::railcomLoopDebug(void) {
 	uint8_t byteNew;
 	uint8_t	byteCount = 0;
 
-	/* this test works, no crash.  so its the processing itself that must be causing some sort of blocking/timeout
-	while (Serial.available() > 0) {
-		byteNew = Serial.read();
-		if (byteCount++ > 20) return;
-	}
-	return;
-	*/
-
-
-	//nope, code below crashes it if you touch R5.  bizarre. lets disable the buffering
+	
 	while (Serial.available() > 0) {
 		//saftey valve,  process max 20 bytes before giving control back to main loop
 		if (byteCount++ > 20) return;
@@ -156,15 +134,12 @@ void nsRailcom::railcomLoopDebug(void) {
 					
 					//we might work around this for POM reads by gating the request with the timeout
 
-					//The ESU decoder definately outputs junk values before finally sending the correct CV
-
 					rcOut["type"] = "railcom";
 					char hex[RC_BUFF_LEN + 1];
 					//char hex[22];
 				buildHexString(hex);
 					rcOut["hex"] = hex;
 					rcOut["payload"] = rc_msg.payload;
-					rcOut["flag"] = DCCpacket.railcomCutoutActive;
 					nsDCCweb::sendJson(rcOut);
 					rcOut.clear();
 					
@@ -215,21 +190,16 @@ void nsRailcom::railcomLoop(void) {
 		case RC_EXPECT_BYTE:
 			if (decodeRailcom(&byteNew,true)) {
 				rc_msg.payload += (byteNew & 0b00111111);
+				railComPostback(rc_msg.payload, true);
 				rcOut["type"] = "dccUI";
 				rcOut["cmd"] = "railcom";
 				rcOut["payload"] = rc_msg.payload;
 				rcOut["count"] = DCCpacket.railcomPacketCount;
-				rcOut["flag"] = DCCpacket.railcomCutoutActive;
-				nsDCCweb::sendJson(rcOut);
+					nsDCCweb::sendJson(rcOut);
 				rcOut.clear();
-				rc_msg.isValid = true;
-			}
+		}
 			//stop looking for incoming messages
-			//2024-11-26.  Revision.  DO keep looking for incoming messages because the ESU decoder I have sends junk values before it finally sends the correct one
-			//no idea why.  it does not implement the RC protocol per spec
-
-			//rc_msg.state = RC_SUCCESS;
-			rc_msg.state = RC_EXPECT_ID0;
+			rc_msg.state = RC_SUCCESS;
 			break;
 
 		case RC_SUCCESS:
@@ -266,22 +236,19 @@ void nsRailcom::railcomLoop(void) {
 		
 		default:
 			//send this message ONCE
-			//2024-11-26 if we receive multiple returns from the decoder, we will timeout and at this point do not send the ??? payload
-			if (rc_msg.isValid == false) {
+				railComPostback(0,false);
+
 				JsonDocument out;
 				out["type"] = "dccUI";
 				out["cmd"] = "railcom";
 				out["payload"] = "???";
 				nsDCCweb::sendJson(out);
-			}
 			rc_msg.state = RC_TIMEOUT;
 		}
 	}
 
 
 }
-
-
 
 
 
@@ -312,9 +279,7 @@ void nsRailcom::readRailcom(uint16_t addr, bool useLongAddr) {
 	return;
 #endif 
 	rc_msg.state = RC_EXPECT_ID0;  
-	rc_msg.isValid = false;
 	DCCpacket.railcomPacketCount = 80;
-
 	
 }
 

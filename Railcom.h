@@ -20,8 +20,8 @@ namespace nsRailcom {
 	void railcomInit();
 	void railcomLoop(void);
 	void railcomLoopDebug(void);
-
 	void readRailcom(uint16_t addr, bool useLongAddr);
+	
 
 	/*local scope*/
 	static bool decodeRailcom(uint8_t inByte, uint8_t* dataOut, bool ignoreControlChars);

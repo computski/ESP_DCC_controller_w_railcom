@@ -862,7 +862,7 @@ void dccPacketEngine(void) {
 
 				//2019-12-02 not very elegant, but update display here else it won't happen
 				//unless we code as a timeout elsewhere
-				updateCvDisplay();
+				updateSMdisplay();
 				//2020-12-23 call DCCweb to send a read result over the websocket
 #ifdef _DCCWEB_h
 				trace(Serial.printf("reg %d val %d\n\r", m_cv.cvReg, m_cv.cvData);)
@@ -1150,7 +1150,7 @@ int8_t findTurnout(uint16_t turnoutAddress) {
 /*2019-11-25 re-write to include bit mainpulation and cleaner value edits
 returns true if triggering a display update
 2020-12-21 it only supports byte write*/
-bool setCVfromKey(void) {
+bool setSMfromKey(void) {
 	uint8_t i;
 	if (keypad.keyHeld) { return false; }
 	if (keypad.keyASCII >= '0' && keypad.keyASCII <= '9') {
@@ -1268,9 +1268,25 @@ void setPowerFromKey(void) {
 }
 
 void setPOMfromKey(void) {
+	//default action is to re-enable numeric/bit display
+	//it is only set to ??? when a read is intiated
+	m_pom.readSuccess = true;
 	switch (keypad.keyASCII) {
+	case 'A':
+		//2024-12-02 initiate a POM read, either bit or byte
+		m_pom.readSuccess = false;
+		if (m_pom.state == POM_BIT) { m_pom.state = POM_BIT_READ; }
+		if (m_pom.state == POM_BYTE) { m_pom.state = POM_BYTE_READ; }
+		dccSE = DCC_POM;  //initiate sequence
+		m_pom.timeout = 4; //one sec and then display will update
+		return;
+
+		//note, this initiates a POM read which has a 0.5 sec timeout and it either returns with readSuccess true/false
+		//based on what came back from the railcom reader.  if valid, the m_pom.cvData and cvBit are updated by the read routine
+	
+
 	case 'B':
-		/*toggle binary/byte*/
+		//toggle binary/byte
 		switch (m_pom.state) {
 		case POM_BYTE:
 			m_pom.state = POM_BIT;
@@ -1279,9 +1295,10 @@ void setPOMfromKey(void) {
 			m_pom.state = POM_BYTE;
 		}
 		m_pom.digitPos = 0;
+		m_pom.readSuccess = true;
 		return;
 	case 'D':
-		/*write*/
+		//write
 		if (m_pom.state == POM_BIT) { m_pom.state = POM_BIT_WRITE; }
 		if (m_pom.state == POM_BYTE) { m_pom.state = POM_BYTE_WRITE; }
 		dccSE = DCC_POM;  //initiate write sequence
@@ -1316,7 +1333,7 @@ void setPOMfromKey(void) {
 			m_pom.cvData = d & 0xFF;
 		}
 		else if (m_pom.digitPos == 7)
-			/*2020-6-17 address type, toggle through S,L,A*/
+			/*2020-6-17 address type, toggle through S,L,A based on any numeric key input*/
 		{
 			if (m_pom.useAccessoryAddr) {
 				//toggle back to S
@@ -1550,18 +1567,34 @@ void updatePOMdisplay() {
 	lcd.setCursor(0, 1);
 
 	char buffer[20];
-	if (m_pom.state == POM_BYTE) {
 
+	switch (m_pom.state)
+	{
+	case POM_BYTE:
+	case POM_BYTE_READ:
+		//2024-12-02 added m_pom.readSuccess. This is true for a good read or if user is updating write value
 		if (m_pom.useAccessoryAddr) {
 			//2020-06-17 added accessory POM support
-			sprintf(buffer, "%04d-%03d  A%05d", m_pom.cvReg, m_pom.cvData, m_pom.addr);
+			if (m_pom.readSuccess) {
+				sprintf(buffer, "%04d-%03d  A%05d", m_pom.cvReg, m_pom.cvData, m_pom.addr);
+			}else{
+				sprintf(buffer, "%04d-???  A%05d", m_pom.cvReg, m_pom.addr);
+			}
 		}
 		else if (m_pom.useLongAddr) {
 			//0000-000  L00000
-			sprintf(buffer, "%04d-%03d  L%05d", m_pom.cvReg, m_pom.cvData, m_pom.addr);
+			if (m_pom.readSuccess){
+				sprintf(buffer, "%04d-%03d  L%05d", m_pom.cvReg, m_pom.cvData, m_pom.addr);
+			}else{
+			sprintf(buffer, "%04d-???  L%05d", m_pom.cvReg, m_pom.addr);
+			}
 		}
 		else {
-			sprintf(buffer, "%04d-%03d  S%05d", m_pom.cvReg, m_pom.cvData, m_pom.addr);
+			if (m_pom.readSuccess) {
+				sprintf(buffer, "%04d-%03d  S%05d", m_pom.cvReg, m_pom.cvData, m_pom.addr);
+			}else{
+				sprintf(buffer, "%04d-???  S%05d", m_pom.cvReg, m_pom.addr);
+			}
 
 		}
 		lcd.print(buffer);
@@ -1577,14 +1610,27 @@ void updatePOMdisplay() {
 		}
 		lcd.blink();
 
-	}
-	else if (m_pom.state == POM_BIT)
-	{/*display binary 1234-b1-0 S12345*/
+		break;
+	case POM_BIT:
+	case POM_BIT_READ:
+	/*display binary 1234-b1-0 S12345*/
 		if (m_pom.useLongAddr) {
-			sprintf(buffer, "%04d-b%d-%d L%05d", m_pom.cvReg, (m_pom.cvBit & 0b111), (m_pom.cvBit >> 7), m_pom.addr);
+			if (m_pom.readSuccess) {
+				sprintf(buffer, "%04d-b%d-%d L%05d", m_pom.cvReg, (m_pom.cvBit & 0b111), (m_pom.cvBit >> 7), m_pom.addr);
+			}
+			else {
+				sprintf(buffer, "%04d-b%d-? L%05d", m_pom.cvReg, (m_pom.cvBit & 0b111),  m_pom.addr);
+			}
+			
 		}
 		else {
-			sprintf(buffer, "%04d-b%d-%d S%05d", m_pom.cvReg, (m_pom.cvBit & 0b111), (m_pom.cvBit >> 7), m_pom.addr);
+			if (m_pom.readSuccess) {
+				sprintf(buffer, "%04d-b%d-%d S%05d", m_pom.cvReg, (m_pom.cvBit & 0b111), (m_pom.cvBit >> 7), m_pom.addr);
+			}
+			else {
+				sprintf(buffer, "%04d-b%d-? S%05d", m_pom.cvReg, (m_pom.cvBit & 0b111), m_pom.addr);
+			}
+			
 		}
 		lcd.print(buffer);
 		/*set cursor 1024-b2-1 L10239*/
@@ -1603,8 +1649,11 @@ void updatePOMdisplay() {
 			lcd.setCursor(m_pom.digitPos + 4, 1);
 		}
 		lcd.blink();
-
+		break;
 	}
+
+
+
 
 
 }
@@ -1822,7 +1871,7 @@ void updateTurnoutDisplay(void) {
 }//end
 
 //how do we arrange a call back to update after timeout?  possibly a call from .ino when it hits zero?
-void updateCvDisplay(void) {
+void updateSMdisplay(void) {
 	lcd.home();
 	char buffer[20];
 	switch (m_cv.state) {
@@ -2586,7 +2635,7 @@ int8_t DCCcore(void) {
 				else {
 					/*2019-12-02 fix to problem with CV-verify. we kick off ACK monitor but then burn up
 					cycles with update cvDisplay.  so fix is have setCVfromKey return bool and only update if true*/
-					if (setCVfromKey()) updateCvDisplay();
+					if (setSMfromKey()) updateSMdisplay();
 				}
 				break;
 
@@ -2597,7 +2646,7 @@ int8_t DCCcore(void) {
 					//cv control is entered whilst eStop active
 					m_machineSE = M_SERVICE;
 					m_stateLED = L_SERVICE;
-					updateCvDisplay();
+					updateSMdisplay();
 					break;
 				}
 
@@ -2700,7 +2749,7 @@ int8_t DCCcore(void) {
 			//countdown cv timeout. repaint display as we hit zero
 			if (m_cv.timeout > 0) {
 				m_cv.timeout--;
-				if (m_cv.timeout == 0) { updateCvDisplay(); }
+				if (m_cv.timeout == 0) { updateSMdisplay(); }
 			}
 			//countdown POM timeout. repaint display as we hit zero
 			if (m_pom.timeout > 0) {
@@ -3144,7 +3193,6 @@ bool writePOMcommand(const char* addr, uint16_t cv, const char* val) {
 	//initiate write sequence
 	dccSE = DCC_POM;
 	//we do not set m_pom.timeout as we don't want to update local display for this remote operation
-	//m_pom.timeout = 8;
 	return true;
 
 }
@@ -3362,3 +3410,39 @@ void incrLocoHistory(LOCO* loc) {
 	age++;
 	loc->history = age;
 }
+
+/// <summary>
+/// Handles event raised from railcom routine if data is read or there is a timeout
+/// </summary>
+/// <param name="result">railcom value</param>
+/// <param name="success">true if read, false if a timeout</param>
+void railComPostback(uint8_t result, bool success) {
+	//if the HUI is actively showing the POM screen, then repaint this
+	if (m_machineSE != M_POM) return;
+
+	//POM_BYTE_READ and POM_BIT_READ quickly decay POM_BYTE and POM_BIT which indicate the POM screen we show
+	// on the hardware interface.  The underlying packet state ending will have reverted to  dccSE = DCC_LOCO
+
+	if ((m_pom.state != POM_BYTE) && (m_pom.state != POM_BIT)) return;
+		//therefore if we are in POM_BYTE or POM_BIT mode (not editing values) then we can safely repaint the UI
+		m_pom.readSuccess = success;
+
+		if (success) {
+			m_pom.cvData = result;
+			//<7> is the bit value, <0-2> the bit pos
+			m_pom.cvBit &= 0b111;  //clear <7>
+			if ((result & (1 << m_pom.cvBit)) != 0) m_pom.cvBit |= 0x80;
+		}
+		updatePOMdisplay();
+	}
+
+
+/*HUI bug 2024-12-02.
+hit button A and screen briefly changes from byte to bit before returning ??? with byte
+
+when reading a bit, after screen shows ? return value, it no longer allows navigation
+if reading a byte, navigation does work after 
+* 
+
+
+*/

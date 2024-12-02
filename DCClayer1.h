@@ -26,18 +26,18 @@
 		bool  trackPower;
 		bool  fastTickFlag;
 		bool  doCutout;
-		bool  railcomCutoutActive;
 		uint8_t railcomPacketCount;
 	};
 
 	/*2023-08-30 doCutout will add a railcom cutout at end of packet if true*/
-	/*2024-11-05 added railcomCutoutActive flag to signal back to main routine that the cutout is in progress*/
-
 	/*2021-11-25 fastTickFlag added, this runs at 1mS and is used for analog detection of ACK pulse in service mode*/
+
+	/*Note: during the railcom cutout, the loco decoder will send data to this unit. This data will be captured in the serial buffer, but due to the overheads
+	in the arduino stack, the serial data becomes avaialble after, and asyncrhonously to, the actual cutout that invoked it*/
+
 
 	extern volatile DCCBUFFER DCCpacket;
 	
-
 	void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase, bool invertEnable);
 	void IRAM_ATTR dcc_init_LMD18200(uint32_t pin_pwm, uint32_t pin_dir, uint32_t pin_brake);
 	void IRAM_ATTR dc_init(uint32_t pin_pwm, uint32_t pin_dir, bool phase, bool invert);

@@ -289,14 +289,14 @@ dcc_init(14,13,true,false);
 
 //GPIO15 goes to JP2 //IO15 has on board 10k pulldown, IO15 must be low for boot
 
-#define DCC_PINS \
+#define nDCC_PINS \
 dcc_init(12,13,true,false);\
 dcc_init(14,13,false,false);
 //note these pins define dcc output, enable output, phase of dcc and inversion of enable
 //for debug I have taken antiphase dcc on one pin.
 //2024-11-01 above is suitable for L298
 
-#define nDCC_PINS \
+#define DCC_PINS \
 dcc_init_LMD18200(13,14,12);
 //when i rewire board, will use this single entry
 
@@ -318,7 +318,7 @@ dcc_init_LMD18200(13,14,12);
 
 
 //set nTRACE to disable, TRACE to enable serial tracing.  Disable for production.
-#define nTRACE   
+#define TRACE   
 
 #ifndef TRACE
 	#define trace(traceCodeBlock) ;
