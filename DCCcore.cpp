@@ -558,7 +558,7 @@ void dccPacketEngine(void) {
 			m_pom.state = POM_BYTE;
 			break;
 
-
+		case POM_BIT_READ:   //2024-12-05 take same byte read action
 		case POM_BYTE_READ:  //2024-05-04
 			//2024-11-02 note, S9.2.1 para 375 only defines write bit/byte and verify bit/byte
 			//to read a byte we need to refer to S9.3.2 para 5.1.1 but actually the read 1 byte command is actually the byte verify command with data=0
@@ -578,9 +578,7 @@ void dccPacketEngine(void) {
 			*/
 
 
-
-			trace(Serial.println("pom_byte_read");)
-				m_pom.packetCount = 4;
+			m_pom.packetCount = 4;
 			if (false) {
 				//placeholder for accessory read
 			}
@@ -608,16 +606,12 @@ void dccPacketEngine(void) {
 			}
 			DCCpacket.packetLen++;
 			/*will exit with DCCpacket.packetLen set at correct length of i+1*/
-			m_pom.state = POM_BYTE;  //revert to transmitting packets, i.e. this packet gets sent
-
+			m_pom.state = m_pom.state== POM_BYTE_READ ? POM_BYTE : POM_BIT;
+			//revert to transmitting packets, i.e. this packet gets sent
 
 #ifdef _RAILCOM_h
-			nsRailcom::readRailcom(m_pom.addr, m_pom.useLongAddr);
-		
+			nsRailcom::readRailcom(m_pom.addr, m_pom.useLongAddr);	
 #endif
-//			nsDCCweb::kissMyAss(m_pom.addr,m_pom.cvReg);
-			
-
 			break;
 
 		case POM_BIT_WRITE:
@@ -1271,6 +1265,7 @@ void setPOMfromKey(void) {
 	//default action is to re-enable numeric/bit display
 	//it is only set to ??? when a read is intiated
 	m_pom.readSuccess = true;
+
 	switch (keypad.keyASCII) {
 	case 'A':
 		//2024-12-02 initiate a POM read, either bit or byte
@@ -1295,7 +1290,6 @@ void setPOMfromKey(void) {
 			m_pom.state = POM_BYTE;
 		}
 		m_pom.digitPos = 0;
-		m_pom.readSuccess = true;
 		return;
 	case 'D':
 		//write
@@ -1311,6 +1305,12 @@ void setPOMfromKey(void) {
 		m_pom.digitPos -= m_pom.digitPos > 0 ? 1 : 0;
 		return;
 	}
+
+	//debug
+	trace(Serial.printf("setPOMkey %d\n", m_pom.state);)
+
+
+
 
 	if (m_pom.state == POM_BYTE) {
 		/*bytewise*/
@@ -1554,6 +1554,7 @@ void updatePOMdisplay() {
 	//1024-b0-1 S12345
 	//1024-b0-1 A12345
 
+	/*
 	if ((m_pom.state == POM_BYTE_WRITE) || (m_pom.state == POM_BIT_WRITE)) {
 		lcd.print("POM written     ");
 		return;
@@ -1565,9 +1566,31 @@ void updatePOMdisplay() {
 		lcd.print("Cv   Bit  POM Ad");
 	}
 	lcd.setCursor(0, 1);
+	*/
 
+
+	//2024-12-04 rewrite to deal with extra read states
+	//write first line of display
+	switch (m_pom.state) 
+	{
+	case POM_BYTE_WRITE:
+	case POM_BIT_WRITE:
+		lcd.print("POM written     ");
+		return;
+	case POM_BYTE_READ:
+	case POM_BIT_READ:
+		lcd.print("POM read        ");
+		break;
+	case POM_BYTE:
+		lcd.print("Cv   Val  POM Ad");
+		break;
+	default:
+		lcd.print("Cv   Bit  POM Ad");
+	}
+	lcd.setCursor(0, 1);
+
+	//deal with second display line
 	char buffer[20];
-
 	switch (m_pom.state)
 	{
 	case POM_BYTE:
@@ -1651,10 +1674,6 @@ void updatePOMdisplay() {
 		lcd.blink();
 		break;
 	}
-
-
-
-
 
 }
 
@@ -2754,7 +2773,10 @@ int8_t DCCcore(void) {
 			//countdown POM timeout. repaint display as we hit zero
 			if (m_pom.timeout > 0) {
 				m_pom.timeout--;
-				if (m_pom.timeout == 0) { updatePOMdisplay(); }
+				if (m_pom.timeout == 0) {
+					trace(Serial.println(F("POM timeout"));)
+					updatePOMdisplay();
+				}
 			}
 
 			//handle LED display state. We don't write directly to the PIN_HEARTBEAT pin, instead it is handled through
@@ -3418,13 +3440,14 @@ void incrLocoHistory(LOCO* loc) {
 /// <param name="success">true if read, false if a timeout</param>
 void railComPostback(uint8_t result, bool success) {
 	//if the HUI is actively showing the POM screen, then repaint this
+	trace(Serial.println("railComPostback");)
+
 	if (m_machineSE != M_POM) return;
 
-	//POM_BYTE_READ and POM_BIT_READ quickly decay POM_BYTE and POM_BIT which indicate the POM screen we show
-	// on the hardware interface.  The underlying packet state ending will have reverted to  dccSE = DCC_LOCO
+	//POM_BYTE_READ and POM_BIT_READ immediately decay to BYTE and BIT 
 
-	if ((m_pom.state != POM_BYTE) && (m_pom.state != POM_BIT)) return;
-		//therefore if we are in POM_BYTE or POM_BIT mode (not editing values) then we can safely repaint the UI
+	if ((m_pom.state == POM_BYTE) || (m_pom.state == POM_BIT)) {
+		//can safely repaint the UI
 		m_pom.readSuccess = success;
 
 		if (success) {
@@ -3435,6 +3458,7 @@ void railComPostback(uint8_t result, bool success) {
 		}
 		updatePOMdisplay();
 	}
+}
 
 
 /*HUI bug 2024-12-02.

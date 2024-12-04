@@ -318,7 +318,7 @@ dcc_init_LMD18200(13,14,12);
 
 
 //set nTRACE to disable, TRACE to enable serial tracing.  Disable for production.
-#define TRACE   
+#define nTRACE   
 
 #ifndef TRACE
 	#define trace(traceCodeBlock) ;
