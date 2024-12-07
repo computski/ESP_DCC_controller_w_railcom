@@ -1,7 +1,7 @@
 ﻿<html xmlns="http://www.w3.org/1999/xhtml">
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!--2021-01-06-->
+    <!--2024-12-06-->
     <!--galaxy S9 viewport size is 360 x 740 PX -->
     <!--galaxy S5 viewport size is 360 x 640 PX -->
     <!--https://css-tricks.com/snippets/css/a-guide-to-flexbox/-->
@@ -74,8 +74,8 @@
     </style>
 
     <script type="text/javascript">
-        //var wsUri = "wss://echo.websocket.org/";
-        var wsUri = "ws://192.168.6.1:12080/";
+       // var wsUri = "wss://echo.websocket.org/";
+       var wsUri = "ws://192.168.6.1:12080/";
 
 
 
@@ -84,7 +84,7 @@
         var hardware = { "type": "dccUI", "cmd": "hardware", "SSID": "DCC_02", "IP": "192.168.7.1", "MAC": "", "pwd": "", "wsPort": 12080, "wiPort": 12090, "version": 0, "action": "poll" };
         var pom = { "type": "dccUI", "cmd": "pom", "action": "byte", "addr":"S3", "cvReg": 0, "cvVal": "B13" };
 
-
+        var cvValprior="";      
 
         var attempts = 0;
 
@@ -259,7 +259,7 @@
                     }
                 }
 
-                //there is no incoming pom json as the command is one way
+                //pom command to controller
                 if (myObj.cmd == "pom") {
                     pom = myObj;
                     if (pom.action == "ok") {
@@ -271,18 +271,20 @@
 
                 }
 
+                //received pom payload
                 if (myObj.cmd == "railcom") {
                     //incoming railcom payload 
-                    cvVal.value = myObj.payload;
+                    displayCVandBit(myObj.payload);
                     msg.innerHTML = "";
+                    //which cv was read (might have been initated on HUI)
+                    if (!isNaN(myObj.cvReg)) cvReg.value = myObj.cvReg;
                 }
 
             }
 
             catch (e) {
                 if (console) console.log(e.message);
-                
-
+               
             }
         }
 
@@ -290,7 +292,7 @@
             //write CV byte
             msg.innerHTML = "&nbsp;";
             if (!doValidate()) return;
-
+           
             var a = selSL.value == "short" ? "S" : "L";
             a = a + addr.value;
             pom.addr = a;
@@ -304,6 +306,7 @@
                 cvVal.value = "";
                 return;
             }
+           
 
             pom.cvVal = "B" + cvVal.value;
             pom.action = "byte";
@@ -311,12 +314,17 @@
             debug.innerHTML = myJSON;
             websocket.send(myJSON);
             msg.innerHTML = "sending pom..."
+            
         }
 
         function readByte() {
-            //write CV byte
+            //read CV byte
             msg.innerHTML = "&nbsp;";
             if (!doValidate()) return;
+
+            //when we read, we clear both byte and bit values to ?
+            //if the result comes back numeric we will update these
+            //if the result is a fail, we will restore these from the temp object
 
             var a = selSL.value == "short" ? "S" : "L";
             a = a + addr.value;
@@ -324,20 +332,19 @@
 
             pom.cvReg = cvReg.value;
 
-             //clear existing cvVal        
-            cvVal.value = "";
+             //clear existing cvVal and selBit
           
-
             pom.cvVal = "R" + cvVal.value;
             pom.action = "byte";
             var myJSON = JSON.stringify(pom);
             debug.innerHTML = myJSON;
             websocket.send(myJSON);
             msg.innerHTML = "reading pom..."
+            displayCVandBit("???");
         }
 
 
-
+       
 
         function writeBit() {
             msg.innerHTML = "&nbsp;";
@@ -359,17 +366,7 @@
             websocket.send(myJSON);
             msg.innerHTML = "sending pom..."
         }
-
-
-
-
-
-
-
-
-
-
-
+                
         function doValidate() {
             //checks address, cv register and byte value
             //returns false if address or cv register is out of bounds
@@ -386,8 +383,12 @@
             }
             if (selSL.value == "short") {
                 if (addr.value > 127) {
-                    addr.value = "";
-                    return false;
+                    selSL.value ="long";
+                    if (addr.value > 10239) {
+                        addr.value = "";
+                        return false;
+                    }
+                    return true;
                 }
             } else {
                 if (addr.value > 10239) {
@@ -413,6 +414,34 @@
             return true;
         }
 
+
+
+        //will write back to CVvalue and bit. x can be numeric or ???
+        function displayCVandBit(x) {
+            cvVal.value = x;
+            selBit.innerHTML = "";  //clear all options
+            var option = document.createElement("option");
+            if (isNaN(x)) {
+                option.text = "???";
+                selBit.add(option);
+                return;
+            }
+
+            //had a numeric result so set/clear indicated bit
+            var b = 1 << cvBit.value;
+            b = b & cvVal.value;
+            option.text = "set";
+            option.selected = (b != 0);
+            selBit.add(option);
+            option = document.createElement("option");
+            option.text = "clear";
+            option.selected = (b == 0);
+            selBit.add(option);
+            }
+
+        function doRestore(){
+            if (isNaN(cvVal.value)) displayCVandBit(cvValprior);
+        }
 
     </script>
 
@@ -455,9 +484,9 @@
             <td> Bit write </td>
         </tr>
         <tr>
-            <td><input id="cvVal" type="text"></td>
+            <td><input id="cvVal" type="text" onfocusout="cvValprior = this.value;" onclick="doRestore();"></td>
             <td>
-                <select id="cvBit">
+                <select id="cvBit" onclick="doRestore();">
                     <option>0</option>
                     <option>1</option>
                     <option>2</option>
@@ -468,7 +497,7 @@
                     <option>7</option>
 
                 </select>
-                <select id="selBit"><option>set</option><option>clear</option></select>
+                <select id="selBit" onclick="doRestore();"><option>set</option><option>clear</option></select>
 
 
             </td>
@@ -483,10 +512,10 @@
         </tr>
         <tr>
             <td><input type="button" id="btnReadByte" value="BYTE READ" onclick="readByte()"></td>
-            <td> <input type="button" id="btnReadBit" value="BIT READ" onclick="readBit()"> </td>
+            <td> <input type="button" id="btnReadBit" value="BIT READ" onclick="readByte()"> </td>
         </tr>
 
-        <tr><td colspan="2"> <span id="debug" style="visibility:visible; font-size:2vmin"> </span></td></tr>
+        <tr><td colspan="2"> <span id="debug" style="visibility:hidden; font-size:2vmin"> </span></td></tr>
     </table>
        
     <br />
