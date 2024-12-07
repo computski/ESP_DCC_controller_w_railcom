@@ -70,6 +70,7 @@ struct RC_MSG {
 	uint16_t locoAddr;
 	bool    useLongAddr;
 	uint8_t payload;
+	uint8_t cvReg;
 #ifdef DEBUG_RC
 	uint8_t buffer[RC_BUFF_LEN];
 	uint8_t bufferIdx;
@@ -91,10 +92,13 @@ enum RC_STATE
 void nsRailcom::railcomInit() {
 	Serial.println(F("\n\nEnable railcom"));
 	Serial.flush();
-	readRailcom(0, false);
+	readRailcom(0, false,1);
 	Serial.end();
-	//railcom uses 250kbaud
-	Serial.begin(250000);
+	//railcom uses 250kbaud, don't enable this baud rate if we are compiling for TRACE
+	 #ifndef TRACE
+		Serial.begin(250000);
+	#endif // !TRACE
+
 	rc_msg.state = RC_EXPECT_ID0;
 	
 }
@@ -194,7 +198,8 @@ void nsRailcom::railcomLoop(void) {
 				rcOut["type"] = "dccUI";
 				rcOut["cmd"] = "railcom";
 				rcOut["payload"] = rc_msg.payload;
-				rcOut["count"] = DCCpacket.railcomPacketCount;
+				rcOut["cvReg"] = rc_msg.cvReg;
+				//rcOut["count"] = DCCpacket.railcomPacketCount;
 					nsDCCweb::sendJson(rcOut);
 				rcOut.clear();
 		}
@@ -242,6 +247,7 @@ void nsRailcom::railcomLoop(void) {
 				out["type"] = "dccUI";
 				out["cmd"] = "railcom";
 				out["payload"] = "???";
+				out["cvReg"] = rc_msg.cvReg;
 				nsDCCweb::sendJson(out);
 			rc_msg.state = RC_TIMEOUT;
 		}
@@ -272,9 +278,10 @@ don't intend to use it to read loco ids from ch1
 /// Reset railcom reader, and look for incoming data for locoIndex
 /// </summary>
 /// <param name="locoIndex"></param>
-void nsRailcom::readRailcom(uint16_t addr, bool useLongAddr) {
+void nsRailcom::readRailcom(uint16_t addr, bool useLongAddr,uint8_t reg) {
 	rc_msg.locoAddr = addr;
 	rc_msg.useLongAddr = useLongAddr;
+	rc_msg.cvReg = reg;
 #ifdef DEBUG_RC
 	return;
 #endif 

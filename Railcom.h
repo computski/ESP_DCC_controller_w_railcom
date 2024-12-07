@@ -20,7 +20,7 @@ namespace nsRailcom {
 	void railcomInit();
 	void railcomLoop(void);
 	void railcomLoopDebug(void);
-	void readRailcom(uint16_t addr, bool useLongAddr);
+	void readRailcom(uint16_t addr, bool useLongAddr, uint8_t reg);
 	
 
 	/*local scope*/

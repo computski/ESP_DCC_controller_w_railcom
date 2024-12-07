@@ -609,8 +609,9 @@ void dccPacketEngine(void) {
 			m_pom.state = m_pom.state== POM_BYTE_READ ? POM_BYTE : POM_BIT;
 			//revert to transmitting packets, i.e. this packet gets sent
 
+			
 #ifdef _RAILCOM_h
-			nsRailcom::readRailcom(m_pom.addr, m_pom.useLongAddr);	
+			nsRailcom::readRailcom(m_pom.addr, m_pom.useLongAddr, m_pom.cvReg);
 #endif
 			break;
 
@@ -1273,7 +1274,7 @@ void setPOMfromKey(void) {
 		if (m_pom.state == POM_BIT) { m_pom.state = POM_BIT_READ; }
 		if (m_pom.state == POM_BYTE) { m_pom.state = POM_BYTE_READ; }
 		dccSE = DCC_POM;  //initiate sequence
-		m_pom.timeout = 4; //one sec and then display will update
+		m_pom.timeout = 8; //2 sec and then display will update
 		return;
 
 		//note, this initiates a POM read which has a 0.5 sec timeout and it either returns with readSuccess true/false
@@ -1554,20 +1555,6 @@ void updatePOMdisplay() {
 	//1024-b0-1 S12345
 	//1024-b0-1 A12345
 
-	/*
-	if ((m_pom.state == POM_BYTE_WRITE) || (m_pom.state == POM_BIT_WRITE)) {
-		lcd.print("POM written     ");
-		return;
-	}
-	if (m_pom.state == POM_BYTE) {
-		lcd.print("Cv   Val  POM Ad");
-	}
-	else {
-		lcd.print("Cv   Bit  POM Ad");
-	}
-	lcd.setCursor(0, 1);
-	*/
-
 
 	//2024-12-04 rewrite to deal with extra read states
 	//write first line of display
@@ -1582,9 +1569,13 @@ void updatePOMdisplay() {
 		lcd.print("POM read        ");
 		break;
 	case POM_BYTE:
+		//because read immediately decays to byte/bit, don't update if this func is called from the railcom postback, but do update this line if
+		//called from the timeout
+		if (m_pom.timeout > 0)break;
 		lcd.print("Cv   Val  POM Ad");
 		break;
 	default:
+		if (m_pom.timeout > 0)break;
 		lcd.print("Cv   Bit  POM Ad");
 	}
 	lcd.setCursor(0, 1);
