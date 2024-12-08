@@ -92,7 +92,8 @@ DCCcoreBoot();
 	//restore settings from EEPROM
 	dccGetSettings();
 
-
+/*2024-08-28 start railcom protocol*/
+	railcomInit(); 
 
 
 	nsJogWheel::jogInit();
@@ -107,10 +108,7 @@ DCCcoreBoot();
 	nsWiThrottle::startThrottle();
 #endif
 
-	/*2024-08-28 start railcom protocol*/
-#ifdef _RAILCOM_h
-	nsRailcom::railcomInit();    
-#endif
+	   
 
 
 } //end boot
@@ -146,10 +144,9 @@ void loop() {
 	DCCcore();
 
 
-	//2024-08-28 dump incoming railcom over websocket
-#ifdef _RAILCOM_h
-	nsRailcom::railcomLoop();
-#endif
+	//2024-08-28 process incoming railcom data
+	railcomLoop();
+
 
 
 

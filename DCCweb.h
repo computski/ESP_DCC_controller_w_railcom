@@ -28,7 +28,8 @@ namespace nsDCCweb {
 	void startWebServices();
 	void loopWebServices(void);
 	void broadcastPower(void);
-	void broadcastReadResult(uint16_t cvReg, int16_t cvVal);
+	void broadcastSMreadResult(uint16_t cvReg, int16_t cvVal);
+	void broadcastPOMreadResult(uint16_t cvReg, int16_t cvVal, char addrType, uint16_t addr);
 	void broadcastChanges(void);
 	void sendJson(JsonObject& out);   //needs to be visible to railcom routines
 	void sendJson(JsonDocument out);

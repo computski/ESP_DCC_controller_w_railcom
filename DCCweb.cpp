@@ -969,11 +969,13 @@ void nsDCCweb::setPower(bool powerOn) {
 	}
 }
 
-//send CV read result message
-void nsDCCweb::broadcastReadResult(uint16_t cvReg, int16_t cvVal) {
-	//this routine is a callback from DCCcore
+/// <summary>
+/// send CV read result message from Service Mode
+/// </summary>
+/// <param name="cvReg">register read</param>
+/// <param name="cvVal">read value, negative if fail</param>
+void nsDCCweb::broadcastSMreadResult(uint16_t cvReg, int16_t cvVal) {
 	JsonDocument out;
-
 	out["type"] = "dccUI";
 	out["cmd"] = "service";
 	out["cvReg"] = cvReg;
@@ -981,9 +983,46 @@ void nsDCCweb::broadcastReadResult(uint16_t cvReg, int16_t cvVal) {
 	out["action"] = cvVal < 0 ? "fail" : "result";
 	out["cvVal"] = cvVal;
 	trace(serializeJsonPretty(out, Serial);)
-
-		sendJson(out);
+	sendJson(out);
 }
+
+/// <summary>
+/// send POM read result
+/// </summary>
+/// <param name="cvReg">register read</param>
+/// <param name="cvVal">value read back, negative if fail</param>
+/// <param name="addrType">A|L|S</param>
+/// <param name="addr">loco or accessory address</param>
+void nsDCCweb::broadcastPOMreadResult(uint16_t cvReg, int16_t cvVal,char addrType,uint16_t addr) {
+	//this routine is a callback from DCCcore
+	JsonDocument out;
+	char buffer[8];
+	char* ptr = buffer;
+	itoa(addr, ++ptr, 10);
+	buffer[0] = addrType;
+	
+	out["type"] = "dccUI";
+	out["cmd"] = "pom";
+	out["action"] = "payload";
+	out["cvReg"] = cvReg;
+	out["addr"] = buffer;
+	//the value will be -1 if read failed
+	if (cvVal < 0) {
+		out["cvVal"] = "???";
+	}
+	else {
+		out["cvVal"] = cvVal;
+	}
+	sendJson(out);
+}
+
+
+
+
+
+
+
+
 
 //evaluate char array for 'true' keyword
 bool nsDCCweb::cBool(const char* v) {
@@ -1049,3 +1088,28 @@ void nsDCCweb::broadcastChanges(void) {
 }
 
 #pragma endregion
+
+
+
+/*
+POM inbound
+  var pom = { "type": "dccUI", "cmd": "pom", "action": "byte", "addr":"S3", "cvReg": 0, "cvVal": "B13" };
+  //action is actually captured in the cvVal as first alpha B write byte, S set bit, C clear bit, R read byte
+  response from this system is action="ok" to the inbound command
+  out["action"] = "ok";
+		out["success"]= writePOMcommand(addr, cv_reg, cv_val);
+
+
+//the control-to-client also might reflect a read performed on the HUI, so it needs to send the address
+//register and the result, where result is ??? if the read failed, else its the byte value
+
+ var pom = { "type": "dccUI", "cmd": "pom", "action": "payload", "addr":"S3", "cvReg": 0, "cvVal": "???" };
+
+ as opposed to current SW
+ var pom = { "type": "dccUI", "cmd": "railcom", "addr":"S3", "cvReg": 0, "payload": "???" };
+
+
+
+
+
+*/

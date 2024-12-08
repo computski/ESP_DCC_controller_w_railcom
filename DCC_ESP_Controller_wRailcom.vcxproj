@@ -83,7 +83,6 @@
     </ClCompile>
     <ClCompile Include="JogWheel.cpp" />
     <ClCompile Include="Keypad.cpp" />
-    <ClCompile Include="Railcom.cpp" />
     <ClCompile Include="WiThrottle.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -94,7 +93,6 @@
     <ClInclude Include="Global.h" />
     <ClInclude Include="JogWheel.h" />
     <ClInclude Include="Keypad.h" />
-    <ClInclude Include="Railcom.h" />
     <ClInclude Include="WiThrottle.h" />
     <ClInclude Include="__vm\.DCC_ESP_Controller_wRailcom.vsarduino.h" />
   </ItemGroup>

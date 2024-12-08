@@ -216,7 +216,7 @@ void dccPutSettings();
 bool writePOMcommand(const char* addr, uint16_t cv, const char* val);
 bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool verify, bool enterSM, bool exitSM);
 float getVolt();  //debug
-void railComPostback(uint8_t result, bool success);
+void railcomCallback(uint8_t result, bool success);
 
 //debug
 void debugTurnoutArray(void);

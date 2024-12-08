@@ -34,9 +34,6 @@
     <ClCompile Include="Keypad.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Railcom.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="__vm\.DCC_ESP_Controller_wRailcom.vsarduino.h">
@@ -64,9 +61,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Keypad.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="Railcom.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

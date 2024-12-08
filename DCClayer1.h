@@ -42,4 +42,13 @@
 	void IRAM_ATTR dcc_init_LMD18200(uint32_t pin_pwm, uint32_t pin_dir, uint32_t pin_brake);
 	void IRAM_ATTR dc_init(uint32_t pin_pwm, uint32_t pin_dir, bool phase, bool invert);
 
+
+	//railcom related
+	void railcomInit();
+	void railcomLoop(void);
+	void readRailcom(uint16_t addr, bool useLongAddr, uint8_t reg);
+
+	static bool decodeRailcom(uint8_t inByte, uint8_t* dataOut, bool ignoreControlChars);
+	static bool decodeRailcom(uint8_t* inByte, bool ignoreControlChars);
+
 #endif

@@ -3,7 +3,7 @@
 // 
 #include "Global.h"
 #include "DCClayer1.h"
-
+#include "DCCcore.h"  //need for railcom
 
 /*DCClayer1 puts a DCC signal on the track.  It will continuously write the DCCbuffer to the track
 The routine also sets a msTickFlag every 10mS which the main loop can use for general timing such as
@@ -17,6 +17,8 @@ Instead you should OR the bits together e.g. gpio->w1ts = this | that
 
 rtc_reg_write decprecated warning...TIMER_REG_WRITE
 https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
+
+2024-12-07 added railcom decode functionality
 */
 
 #include <c_types.h>
@@ -118,6 +120,44 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 	//DCC layer 1 
 	volatile uint8_t  TXbyteCount;
 	volatile uint8_t  TXbitCount=32;
+
+
+	//Railcom related
+	const uint8_t decode[] = {
+0b10101100,0b10101010,0b10101001,0b10100101,0b10100011,0b10100110,0b10011100,0b10011010,0b10011001,0b10010101,0b10010011,0b10010110,0b10001110,0b10001101,0b10001011,0b10110001,
+0b10110010,0b10110100,0b10111000,0b01110100,0b01110010,0b01101100,0b01101010,0b01101001,0b01100101,0b01100011,0b01100110,0b01011100,0b01011010,0b01011001,0b01010101,0b01010011,
+0b01010110,0b01001110,0b01001101,0b01001011,0b01000111,0b01110001,0b11101000,0b11100100,0b11100010,0b11010001,0b11001001,0b11000101,0b11011000,0b11010100,0b11010010,0b11001010,
+0b11000110,0b11001100,0b01111000,0b00010111,0b00011011,0b00011101,0b00011110,0b00101110,0b00110110,0b00111010,0b00100111,0b00101011,0b00101101,0b00110101,0b00111001,0b00110011,
+0b00001111,0b11110000,0b11100001 };
+#define RC_NACK 0x40
+#define RC_ACK 0x41
+#define RC_BUSY 0x42
+
+//#define RC_BUFF_LEN 16
+
+	uint8_t _rcstate;
+	uint8_t _payload;
+
+	//can delete this struct and just run with state and payload as local vars
+	/*
+	struct RC_MSG {
+		uint8_t state;
+		uint16_t locoAddr;
+		bool    useLongAddr;
+		uint8_t payload;
+		uint8_t cvReg;
+
+	}rc_msg;
+	*/
+
+	enum RC_STATE
+	{
+		RC_EXPECT_ID0,
+		RC_EXPECT_BYTE,
+		RC_SUCCESS,
+		RC_TIMEOUT,
+	};
+
 
 
 
@@ -753,3 +793,163 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 #pragma endregion
 
 
+#pragma region RAILCOM
+
+	/// <summary>
+/// Initialise UART for railcom, start listening for incoming data
+/// </summary>
+	void railcomInit() {
+		Serial.println(F("\n\nEnable railcom"));
+		Serial.flush();
+		readRailcom(0, false, 1);
+		Serial.end();
+		//railcom uses 250kbaud, don't enable this baud rate if we are compiling for TRACE
+#ifndef TRACE
+		Serial.begin(250000);
+#endif // !TRACE
+
+		_rcstate = RC_EXPECT_ID0;
+
+	}
+
+	/// <summary>
+/// Call once per program loop
+/// </summary>
+	void railcomLoop(void) {
+
+		uint8_t byteNew;
+		uint8_t	byteCount = 0;
+
+		while (Serial.available() > 0) {
+			// read the incoming byte:
+			byteNew = Serial.read();
+
+			switch (_rcstate) {
+			case RC_EXPECT_BYTE:
+				if (decodeRailcom(&byteNew, true)) {
+					_payload += (byteNew & 0b00111111);
+
+					//incoming websocket or HUI button pushes were processed in DCCcore.  Once layer1 decodes a railcom message
+					//it needs to call back to DCCcore to process the valid payload.
+					railcomCallback(_payload, true);
+					/*
+					rcOut["type"] = "dccUI";
+					rcOut["cmd"] = "railcom";
+					rcOut["payload"] = rc_msg.payload;
+					rcOut["cvReg"] = rc_msg.cvReg;
+					//rcOut["count"] = DCCpacket.railcomPacketCount;
+					nsDCCweb::sendJson(rcOut);
+					rcOut.clear();
+					*/
+				}
+				//stop looking for incoming messages
+				_rcstate = RC_SUCCESS;
+				break;
+
+			case RC_SUCCESS:
+			case RC_TIMEOUT:
+				break;
+
+
+			default:
+				if (decodeRailcom(&byteNew, true)) {
+					if ((byteNew & 0b00111100) == 0) {
+						//found ID0
+						_payload = byteNew << 6;
+						_rcstate = RC_EXPECT_BYTE;
+						break;
+					}
+				}
+				_rcstate = RC_EXPECT_ID0;
+				break;
+
+			}
+
+			//saftey valve,  process max 20 bytes before giving control back to main loop
+			if (++byteCount > 20) break;
+		}
+
+
+		//timed out?
+
+		if (DCCpacket.railcomPacketCount == 0) {
+			switch (_rcstate) {
+			case RC_SUCCESS:
+			case RC_TIMEOUT:
+				break;
+
+			default:
+				//send this message ONCE
+				railcomCallback(0, false);
+
+				/* to be handled in DCCweb invoked from DCCcore
+				JsonDocument out;
+				out["type"] = "dccUI";
+				out["cmd"] = "railcom";
+				out["payload"] = "???";
+				out["cvReg"] = rc_msg.cvReg;
+				nsDCCweb::sendJson(out);
+				*/
+				_rcstate = RC_TIMEOUT;
+			}
+		}
+
+
+	}
+
+
+	/// <summary>
+	/// Reset railcom reader, and look for incoming data for locoIndex
+	/// </summary>
+	/// <param name="locoIndex"></param>
+	void readRailcom(uint16_t addr, bool useLongAddr, uint8_t reg) {
+		//rc_msg.locoAddr = addr;
+	//	rc_msg.useLongAddr = useLongAddr;
+	//	rc_msg.cvReg = reg;
+#ifdef DEBUG_RC
+		return;
+#endif 
+	_rcstate = RC_EXPECT_ID0;
+	DCCpacket.railcomPacketCount = 80;
+
+	}
+
+
+	bool decodeRailcom(uint8_t inByte, uint8_t* dataOut, bool ignoreControlChars) {
+		for (int i = 0; i <= RC_BUSY; i++) {
+			if (inByte == decode[i]) {
+				//valid
+				*dataOut = i;
+				return true;
+			}
+			if (ignoreControlChars && (i >= 0x3F)) return false;
+		}
+		//didn't find a match
+		*dataOut = 0;
+		return false;
+	}
+
+	/// <summary>
+	/// decode inbound data against the 4/8 decode table, overwriting inByte with its decoded value
+	/// </summary>
+	/// <param name="inByte">4/8 coded serial data inbound, overwritten with decoded value</param>
+	/// <param name="ignoreControlChars">ignore ACK, NACK, BUSY and only return data values</param>
+	/// <returns>true if decode successful</returns>
+	bool decodeRailcom(uint8_t* inByte, bool ignoreControlChars) {
+		for (int i = 0; i <= RC_BUSY; i++) {
+			if (*inByte == decode[i]) {
+				//valid
+				*inByte = i;
+				return true;
+			}
+			if (ignoreControlChars && (i >= 0x3F)) return false;
+		}
+		//didn't find a match
+
+		return false;
+
+	}
+
+
+
+#pragma endregion

@@ -608,11 +608,8 @@ void dccPacketEngine(void) {
 			/*will exit with DCCpacket.packetLen set at correct length of i+1*/
 			m_pom.state = m_pom.state== POM_BYTE_READ ? POM_BYTE : POM_BIT;
 			//revert to transmitting packets, i.e. this packet gets sent
-
-			
-#ifdef _RAILCOM_h
-			nsRailcom::readRailcom(m_pom.addr, m_pom.useLongAddr, m_pom.cvReg);
-#endif
+	
+			readRailcom(m_pom.addr, m_pom.useLongAddr, m_pom.cvReg);
 			break;
 
 		case POM_BIT_WRITE:
@@ -861,7 +858,7 @@ void dccPacketEngine(void) {
 				//2020-12-23 call DCCweb to send a read result over the websocket
 #ifdef _DCCWEB_h
 				trace(Serial.printf("reg %d val %d\n\r", m_cv.cvReg, m_cv.cvData);)
-					nsDCCweb::broadcastReadResult(m_cv.cvReg, m_cv.cvData);
+					nsDCCweb::broadcastSMreadResult(m_cv.cvReg, m_cv.cvData);
 #endif
 			}
 
@@ -3162,11 +3159,13 @@ void replicateAcrossConsist(int8_t slot) {
 
 
 
-//external calls for POM  cv, val
-//returns true if POM initiated
-//the cv register value passed is +1 compared to actual value, e.g. reg 23 passed is 22 in the memory space
-//val is B23 S0 C2 where the instruction is byte, set, clear for bits
-//2024-05-04 add R23 to read register 23 for example
+/// <summary>
+/// Initiates a POM command to the track
+/// </summary>
+/// <param name="addr">first char A accessory, L long, S short. Followed by the address numeric</param>
+/// <param name="cv">CV register to write to</param>
+/// <param name="val">first char B write byte, R read byte, S set bit, C clear bit. Followed by numeric</param>
+///  <returns>false if command malformed, true if initiated</returns>
 bool writePOMcommand(const char* addr, uint16_t cv, const char* val) {
 
 	if (addr == nullptr) return false;
@@ -3201,7 +3200,10 @@ bool writePOMcommand(const char* addr, uint16_t cv, const char* val) {
 		m_pom.cvBit = (val[1] - '0') & 0b111;
 		m_pom.cvBit += val[0] == 'S' ? 0b10000000 : 0;
 		m_pom.state = POM_BIT_WRITE;
+		break;
 
+	default:
+		return false;
 	}
 	//initiate write sequence
 	dccSE = DCC_POM;
@@ -3425,13 +3427,28 @@ void incrLocoHistory(LOCO* loc) {
 }
 
 /// <summary>
-/// Handles event raised from railcom routine if data is read or there is a timeout
+/// Handles event raised from layer1 railcom routine if data is read or there is a timeout
 /// </summary>
 /// <param name="result">railcom value</param>
 /// <param name="success">true if read, false if a timeout</param>
-void railComPostback(uint8_t result, bool success) {
+void railcomCallback(uint8_t result, bool success) {
 	//if the HUI is actively showing the POM screen, then repaint this
-	trace(Serial.println("railComPostback");)
+	trace(Serial.println("railcomCallback");)
+
+		//send a websocket transmission
+		//we do this via a routine in DCCweb because all websockets are handled there
+		//we need to populate addr, cvReg and payload (i.e. the cv return value)
+		
+		char addrType = 'S';
+		addrType = m_pom.useAccessoryAddr ? 'A' : addrType;
+		addrType = m_pom.useLongAddr ? 'L' : addrType;
+
+		if (success){
+			nsDCCweb::broadcastPOMreadResult(m_pom.cvReg,result,addrType,m_pom.addr);
+		}
+		else {
+			nsDCCweb::broadcastPOMreadResult(m_pom.cvReg, -1, addrType, m_pom.addr);
+		}
 
 	if (m_machineSE != M_POM) return;
 
@@ -3452,12 +3469,3 @@ void railComPostback(uint8_t result, bool success) {
 }
 
 
-/*HUI bug 2024-12-02.
-hit button A and screen briefly changes from byte to bit before returning ??? with byte
-
-when reading a bit, after screen shows ? return value, it no longer allows navigation
-if reading a byte, navigation does work after 
-* 
-
-
-*/
