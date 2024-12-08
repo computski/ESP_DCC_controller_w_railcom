@@ -269,15 +269,18 @@
 
                     }
 
-                }
+                    if (pom.action == "payload") {
+                        //incoming railcom payload 
+                        displayCVandBit(pom.cvVal);
+                        msg.innerHTML = "";
+                        //which cv was read? (might have been initated on HUI)
+                        if (!isNaN(pom.cvReg)) cvReg.value = pom.cvReg;
+                        //also need to assert the address
+                        var a = pom.addr;
+                        selSL.value = a.charAt(0) == "S" ? "short" : "long";
+                        addr.value = a.substring(1);
+                    }
 
-                //received pom payload
-                if (myObj.cmd == "railcom") {
-                    //incoming railcom payload 
-                    displayCVandBit(myObj.payload);
-                    msg.innerHTML = "";
-                    //which cv was read (might have been initated on HUI)
-                    if (!isNaN(myObj.cvReg)) cvReg.value = myObj.cvReg;
                 }
 
             }
