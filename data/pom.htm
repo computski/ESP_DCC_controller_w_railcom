@@ -214,16 +214,13 @@
             //clear a trip condition, or toggle track power
             if (btnPwr.value == "TRIPPED") {
                 power.track = true;
-                power.trip = false;
-                //ensure we still have service mode power of 250mA
-                power.SM = true;
+                power.trip = false;      
             } else {
                 power.track = btnPwr.value == "ON" ? false : true;
                 if (console) (console.log("power now " + power.track))
             }
 
             var myJSON = JSON.stringify(power);
-            debug.innerHTML = myJSON;
             websocket.send(myJSON);
         }
 
@@ -519,7 +516,7 @@
         </tr>
 
         <tr><td colspan="2"> <span id="debug" style="visibility:hidden; font-size:2vmin"> </span></td></tr>
-    </table>
+     </table>
        
     <br />
     <br />
