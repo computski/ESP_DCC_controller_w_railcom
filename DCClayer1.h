@@ -38,7 +38,7 @@
 
 	extern volatile DCCBUFFER DCCpacket;
 	
-	void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase, bool invertEnable);
+	void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase, bool enableAsHigh, bool enableAciveDuringCutout);
 	void IRAM_ATTR dcc_init_LMD18200(uint32_t pin_pwm, uint32_t pin_dir, uint32_t pin_brake);
 	void IRAM_ATTR dc_init(uint32_t pin_pwm, uint32_t pin_dir, bool phase, bool invert);
 
@@ -50,5 +50,24 @@
 
 	static bool decodeRailcom(uint8_t inByte, uint8_t* dataOut, bool ignoreControlChars);
 	static bool decodeRailcom(uint8_t* inByte, bool ignoreControlChars);
+
+	/*2024-12-12 a note on railcom.  The railcom spec says serial data should be asserted by the decoder around 30uS into the railcom cutout.  The arduino stack does not allow
+	* us to directly manipulate the serial port.  It reads incoming serial into a buffer but there are variable latencies on when this data appears, so it is not possible for the
+	* software to know if the data in the buffer came from a specific railcom cutout.  Furthermore, we are constantly reading the buffer analysing and mostly ignoring
+	* its content.  There is quite a lot of junk data from noise appearing in the buffer and this can actually upset the decoding of valid data if a valid 4/8 byte is read but actually
+	* is junk data and not part of a message.   We can improve this situation by gating pin 7 of the 6N137 with the railcom sync signal.  This means we only present serial data to be 
+	* ESP serial port during the cutout periods.  This greatly improves the reliabilty of reads.
+	* D8 GPIO15 is used as the railcom sync pin and normally this would be estop (pull to ground). However, it must be low at boot.  Not a problem because pin 7 on the 6n137 has 
+	* a weak pullup, so we need to put a stronger pull-down on this, say 1k and we should be good..
+	* if PIN_ESTOP is left undefined, then it can be assigned via PIN_RAILCOM_SYNC
+	* Can it be used for both?  Answer is yes, because outside of a railcom cutout, we can breiefly re-purpose the pin as an input, read it and if we see low, trigger estop.
+	* pulling it low will need to be via a resistor so it does not damage the pin when used as a railcom sync output.  and also it won't damage the 6n137.
+	* But that said, we would need to use a PNP pulldown off GPIO15 and into the 6n317 enable, because we'd need to repurpose the GP to be WPU and a 1k res direcly on the pin to ground
+	* would probably override this, hence the need for a PNP isolator.  Actually 2k2 works, 5k1 does not.  so maybe internal WPU and 6n WPU would be enough to overcome this? the mini itself has a 12k
+	* pulldown and this does not get in the way of the ESP WPU.
+	* 
+	
+	*/
+
 
 #endif

@@ -42,7 +42,6 @@ namespace nsDCCweb {
 	static bool changeToSlot(uint8_t slot, uint16_t address, bool useLong, bool use128, const char* name);
 	static bool changeToSlot(uint8_t slot, const char* addr, bool useLong, bool use128, const char* name);
 	static void setPower(bool powerOn);
-	static bool cBool(const char* v);
 }
 
 #endif

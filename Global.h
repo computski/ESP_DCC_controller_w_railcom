@@ -289,14 +289,20 @@ dcc_init(14,13,true,false);
 
 //GPIO15 goes to JP2 //IO15 has on board 10k pulldown, IO15 must be low for boot
 
-#define nDCC_PINS \
-dcc_init(12,13,true,false);\
-dcc_init(14,13,false,false);
+#define DCC_PINS \
+dcc_init(12,13,true,true,true);\
+dcc_init(14,13,false,true,true);
+
+//last switch is false for LMD, true for 298 and IBT
+
+
+
+
 //note these pins define dcc output, enable output, phase of dcc and inversion of enable
 //for debug I have taken antiphase dcc on one pin.
 //2024-11-01 above is suitable for L298
 
-#define DCC_PINS \
+#define nDCC_PINS \
 dcc_init_LMD18200(13,14,12);
 //when i rewire board, will use this single entry
 
@@ -333,5 +339,11 @@ you'd need to move this macro from global.h to each file*/
 
 
 /*end of Global.h*/
+
+
+
+/*possible bug: use of Simple Websocket Client which is a Chrome extension, can cause the ESP to hang/ slow response if the websocket is not closed from the client (e.g. WiFi drops out)
+This extension was only used for testing, and use of Chromium inside of EngineDriver, or use of webpages+websockets in Chrome and Edge seems to work fine.
+*/
 #endif
 

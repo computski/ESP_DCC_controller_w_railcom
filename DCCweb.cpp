@@ -303,19 +303,30 @@ void nsDCCweb::sendJson(JsonDocument out) {
 
 
 /// <summary>
-/// Process a JSON inbound document
+/// Process a JSON inbound document.
 /// </summary>
 /// <param name="doc">inbound json document that has been deserialised and error checked</param>
 void nsDCCweb::DCCwebWS(JsonDocument doc) {
+	//https://arduinojson.org/v6/api/jsondocument/is/
+
 	const char* cmd = doc["cmd"];
 	if (cmd == nullptr) return;
 
 	trace(Serial.println("DCCwebWS");)
-
+	
 		if (strcmp(cmd, "power") == 0) {
 			//if a param is blank, means client web page wants to poll value
 			//if client provides a value for mA_limit or V_limit, write this to EEPROM
 			//to avoid unintential writes, client should send 0 values
+
+			//Note with JSON ver > 6.10.0 booleans are handled differently
+			//https://arduinojson.org/v6/api/jsondocument/is/
+			//previously boolean was implicitly converted to a char array.  now that conversion will return nullptr.
+			//instead you could use doc["item"]as<std::string>(); to return a standard string. true|false will map to "true" | "false"
+			//but you'd need to further convert to a C string to use const char* pointers.
+			//Instead, we test for is<bool> and then directly use the bool value
+
+
 			const char* v = doc["mA_limit"];
 			if (v != nullptr) {
 				if (atoi(v) > 0 && atoi(v) != bootController.currentLimit) {
@@ -335,18 +346,13 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 				}
 			}
 
-			v = doc["track"];
-			if (v != nullptr) {
-				//2021-12-06 if value is unknown, client wants to poll it, not set it
-				if (strcmp(cmd, "unknown") != 0) setPower(cBool(v));
-			}
 
-			v = doc["SM"];
-			if (v != nullptr) {
-				//additionally set the power.serviceMode flag if present
-				//used for service mode programming
-				power.serviceMode = cBool(v);
-			}
+			//2024-12-15 [track] is expected as a boolean
+			if (doc["track"].is<bool>()) setPower(doc["track"]);
+
+			//2024-12-15 [SM] is expected as a boolean
+			if (doc["SM"].is<bool>()) power.serviceMode = doc["SM"];
+
 
 			dccPutSettings();
 			JsonDocument out;
@@ -1019,20 +1025,8 @@ void nsDCCweb::broadcastPOMreadResult(uint16_t cvReg, int16_t cvVal,char addrTyp
 
 
 
-
-
-
-
-
-//evaluate char array for 'true' keyword
-bool nsDCCweb::cBool(const char* v) {
-	if (v == nullptr) return false;
-	return (strcmp(v, "true") == 0);
-}
-
 //broadcast any turnout changes that occurred outside of this module
 void nsDCCweb::broadcastChanges(void) {
-
 
 	//if the loco roster has changed, send it
 	if (bootController.flagLocoRoster) {
