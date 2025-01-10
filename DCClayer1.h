@@ -3,6 +3,7 @@
 // 2021-12-17 simplified dcc_init() and dc_init()
 // DC mode is selected in the .INO setup routine
 // 2023-09-24 added Railcom cutout
+// 2024-12-12 added Railcom decoder into layer 1
 
 #ifndef _DCCLAYER1_h
 #define _DCCLAYER1_h
@@ -26,7 +27,7 @@
 		bool  trackPower;
 		bool  fastTickFlag;
 		bool  doCutout;
-		uint8_t railcomPacketCount;
+		uint8_t railcomPacketCount;  //used for railcom timeout
 	};
 
 	/*2023-08-30 doCutout will add a railcom cutout at end of packet if true*/
@@ -38,7 +39,7 @@
 
 	extern volatile DCCBUFFER DCCpacket;
 	
-	void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase, bool enableAsHigh, bool enableAciveDuringCutout);
+	void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase, bool enableAsHigh, bool enableActiveDuringCutout);
 	void IRAM_ATTR dcc_init_LMD18200(uint32_t pin_pwm, uint32_t pin_dir, uint32_t pin_brake);
 	void IRAM_ATTR dc_init(uint32_t pin_pwm, uint32_t pin_dir, bool phase, bool invert);
 
@@ -46,7 +47,7 @@
 	//railcom related
 	void railcomInit();
 	void railcomLoop(void);
-	void readRailcom(uint16_t addr, bool useLongAddr, uint8_t reg);
+	void railcomRead(uint16_t addr, bool useLongAddr, uint8_t reg);
 
 	static bool decodeRailcom(uint8_t inByte, uint8_t* dataOut, bool ignoreControlChars);
 	static bool decodeRailcom(uint8_t* inByte, bool ignoreControlChars);

@@ -609,7 +609,7 @@ void dccPacketEngine(void) {
 			m_pom.state = m_pom.state== POM_BYTE_READ ? POM_BYTE : POM_BIT;
 			//revert to transmitting packets, i.e. this packet gets sent
 	
-			readRailcom(m_pom.addr, m_pom.useLongAddr, m_pom.cvReg);
+			railcomRead(m_pom.addr, m_pom.useLongAddr, m_pom.cvReg);
 			break;
 
 		case POM_BIT_WRITE:

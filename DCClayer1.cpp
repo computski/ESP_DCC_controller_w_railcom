@@ -7,7 +7,7 @@
 
 /*DCClayer1 puts a DCC signal on the track.  It will continuously write the DCCbuffer to the track
 The routine also sets a msTickFlag every 10mS which the main loop can use for general timing such as
-keyboard scans.
+keyboard scans.  It also generates a Railcom Cutout and looks for inbound Railcom data.
 
 Note: using non PWM compat mode, the timebase is 200nS.
 
@@ -33,7 +33,6 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 #endif
 #define PWM_USE_NMI 0
 
-/* no user servicable parts beyond this point */
 
 /*notes.
  * compat mode 0.  works with nmI = 0 or 1
@@ -124,8 +123,8 @@ volatile uint8_t  TXbyteCount;
 volatile uint8_t  TXbitCount = 32;
 
 
-//Railcom related
-const uint8_t decode[] = {
+//Railcom 4/8 decode table
+const uint8_t railcomTable[] = {
 0b10101100,0b10101010,0b10101001,0b10100101,0b10100011,0b10100110,0b10011100,0b10011010,0b10011001,0b10010101,0b10010011,0b10010110,0b10001110,0b10001101,0b10001011,0b10110001,
 0b10110010,0b10110100,0b10111000,0b01110100,0b01110010,0b01101100,0b01101010,0b01101001,0b01100101,0b01100011,0b01100110,0b01011100,0b01011010,0b01011001,0b01010101,0b01010011,
 0b01010110,0b01001110,0b01001101,0b01001011,0b01000111,0b01110001,0b11101000,0b11100100,0b11100010,0b11010001,0b11001001,0b11000101,0b11011000,0b11010100,0b11010010,0b11001010,
@@ -828,9 +827,9 @@ void IRAM_ATTR dc_init(uint32_t pin_pwm, uint32_t pin_dir, bool phase, bool inve
 void railcomInit() {
 	Serial.println(F("\n\nEnable railcom"));
 	Serial.flush();
-	readRailcom(0, false, 1);
+	railcomRead(0, false, 1);
 	
-	//railcom uses 250kbaud, don't enable this baud rate if we are compiling for TRACE
+	//railcom uses 250kbaud, don't enable this baud rate if we are compiling for TRACE because trace needs the serial port
 #ifndef TRACE
 	Serial.end();
 	Serial.begin(250000);
@@ -913,7 +912,7 @@ void railcomLoop(void) {
 /// Reset railcom reader, and look for incoming data for locoIndex
 /// </summary>
 /// <param name="locoIndex"></param>
-void readRailcom(uint16_t addr, bool useLongAddr, uint8_t reg) {
+void railcomRead(uint16_t addr, bool useLongAddr, uint8_t reg) {
 #ifdef DEBUG_RC
 	return;
 #endif 
@@ -924,7 +923,7 @@ void readRailcom(uint16_t addr, bool useLongAddr, uint8_t reg) {
 
 bool decodeRailcom(uint8_t inByte, uint8_t* dataOut, bool ignoreControlChars) {
 	for (int i = 0; i <= RC_BUSY; i++) {
-		if (inByte == decode[i]) {
+		if (inByte == railcomTable[i]) {
 			//valid
 			*dataOut = i;
 			return true;
@@ -944,7 +943,7 @@ bool decodeRailcom(uint8_t inByte, uint8_t* dataOut, bool ignoreControlChars) {
 /// <returns>true if decode successful</returns>
 bool decodeRailcom(uint8_t* inByte, bool ignoreControlChars) {
 	for (int i = 0; i <= RC_BUSY; i++) {
-		if (*inByte == decode[i]) {
+		if (*inByte == railcomTable[i]) {
 			//valid
 			*inByte = i;
 			return true;
