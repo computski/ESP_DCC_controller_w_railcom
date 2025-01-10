@@ -860,15 +860,7 @@ void railcomLoop(void) {
 				//incoming websocket or HUI button pushes were processed in DCCcore.  Once layer1 decodes a railcom message
 				//it needs to call back to DCCcore to process the valid payload.
 				railcomCallback(_payload, true);
-				/*
-				rcOut["type"] = "dccUI";
-				rcOut["cmd"] = "railcom";
-				rcOut["payload"] = rc_msg.payload;
-				rcOut["cvReg"] = rc_msg.cvReg;
-				//rcOut["count"] = DCCpacket.railcomPacketCount;
-				nsDCCweb::sendJson(rcOut);
-				rcOut.clear();
-				*/
+			
 			}
 			//stop looking for incoming messages
 			_rcstate = RC_SUCCESS;
@@ -909,15 +901,6 @@ void railcomLoop(void) {
 		default:
 			//send this message ONCE
 			railcomCallback(0, false);
-
-			/* to be handled in DCCweb invoked from DCCcore
-			JsonDocument out;
-			out["type"] = "dccUI";
-			out["cmd"] = "railcom";
-			out["payload"] = "???";
-			out["cvReg"] = rc_msg.cvReg;
-			nsDCCweb::sendJson(out);
-			*/
 			_rcstate = RC_TIMEOUT;
 		}
 	}
@@ -931,15 +914,11 @@ void railcomLoop(void) {
 /// </summary>
 /// <param name="locoIndex"></param>
 void readRailcom(uint16_t addr, bool useLongAddr, uint8_t reg) {
-	//rc_msg.locoAddr = addr;
-//	rc_msg.useLongAddr = useLongAddr;
-//	rc_msg.cvReg = reg;
 #ifdef DEBUG_RC
 	return;
 #endif 
 	_rcstate = RC_EXPECT_ID0;
 	DCCpacket.railcomPacketCount = 80;
-
 }
 
 

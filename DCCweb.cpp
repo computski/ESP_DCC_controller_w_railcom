@@ -235,8 +235,9 @@ void nsDCCweb::loopWebServices(void) {
 #pragma region WEBSOCKET_routines
 
 void nsDCCweb::webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) { // When a WebSocket message is received
-
+	
 	switch (type) {
+		
 	case WStype_DISCONNECTED:             // if the websocket is disconnected
 		trace(Serial.printf("[%u] Disconnected!\n", num);)
 			break;
@@ -270,6 +271,8 @@ void nsDCCweb::webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size
 			nsDCCweb::DCCwebWS(doc);
 			return;
 		}
+
+		
 
 		/*for all other types, call out to the JsonThrottle if module loaded*/
 #ifdef _JSONTHROTTLE_h
@@ -1083,27 +1086,3 @@ void nsDCCweb::broadcastChanges(void) {
 
 #pragma endregion
 
-
-
-/*
-POM inbound
-  var pom = { "type": "dccUI", "cmd": "pom", "action": "byte", "addr":"S3", "cvReg": 0, "cvVal": "B13" };
-  //action is actually captured in the cvVal as first alpha B write byte, S set bit, C clear bit, R read byte
-  response from this system is action="ok" to the inbound command
-  out["action"] = "ok";
-		out["success"]= writePOMcommand(addr, cv_reg, cv_val);
-
-
-//the control-to-client also might reflect a read performed on the HUI, so it needs to send the address
-//register and the result, where result is ??? if the read failed, else its the byte value
-
- var pom = { "type": "dccUI", "cmd": "pom", "action": "payload", "addr":"S3", "cvReg": 0, "cvVal": "???" };
-
- as opposed to current SW
- var pom = { "type": "dccUI", "cmd": "railcom", "addr":"S3", "cvReg": 0, "payload": "???" };
-
-
-
-
-
-*/

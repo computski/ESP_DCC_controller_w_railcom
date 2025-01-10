@@ -282,7 +282,7 @@ dcc_init(14,13,true,false);
 #define	PIN_SDA		0 
 
 //#define	PIN_HEARTBEAT 16  //not used, instead for the WeMos board we will define PIN_JOG_PUSH
-#define ROTARY_HW40 //in this case we are using a rotary HW40 device, if not, then change to nROTARY_HW40
+#define nROTARY_HW40 //in this case we are using a rotary HW40 device, if not, then change to nROTARY_HW40
 #define PIN_JOG_PUSH	16   
 #define	PIN_JOG1	4  
 #define	PIN_JOG2	5 
@@ -290,8 +290,8 @@ dcc_init(14,13,true,false);
 //GPIO15 goes to JP2 //IO15 has on board 10k pulldown, IO15 must be low for boot
 
 #define DCC_PINS \
-dcc_init(12,13,true,true,true);\
-dcc_init(14,13,false,true,true);
+dcc_init(12,13,true,true,false);\
+dcc_init(14,13,false,true,false);
 
 //last switch is false for LMD, true for 298 and IBT
 
@@ -307,7 +307,10 @@ dcc_init_LMD18200(13,14,12);
 //when i rewire board, will use this single entry
 
 
-#define KEYPAD_ADDRESS 0x21   //pcf8574
+#define nKEYPAD_ADDRESS 0x21   //pcf8574
+#define KEYPAD_ADDRESS 0x3F   //pcf8574a
+//default address of the INA is 0x40
+
 //addr, en,rw,rs,d4,d5,d6,d7,backlight, polarity.   we are using this as a 4 bit device
 //my display pinout is rs,rw,e,d0-d7.  only d<4-7> are used. <210>  appears because bits <012> are mapped
 //as en,rw,rs and we need to reorder them per actual order on the hardware, 3 is mapped to the backlight
@@ -344,6 +347,13 @@ you'd need to move this macro from global.h to each file*/
 
 /*possible bug: use of Simple Websocket Client which is a Chrome extension, can cause the ESP to hang/ slow response if the websocket is not closed from the client (e.g. WiFi drops out)
 This extension was only used for testing, and use of Chromium inside of EngineDriver, or use of webpages+websockets in Chrome and Edge seems to work fine.
+
+It is a bug.  if you connect to the web pages, navigate a couple (you do not even have to interact) then close the wifi connection on the PC or on phone then
+the ESP will go slow, the blue light indicating I2C activity starts slow on/off instead of solid on.
+
+I think to exit cleanly you must close the web pages before you switch your wifi connection.  Remember that the web pages invoke a websocket connection and i suspect that
+the client dropping the WS connection might be the problem here.  if you shut the web page, the socket is closed correctly.
+
 */
 #endif
 
