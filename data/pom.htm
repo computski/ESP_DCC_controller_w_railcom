@@ -137,6 +137,7 @@
                 }
             }
             //XMLHttpRequest.open(method, url[, async[, user[, password]]])
+            if (console) console.log(theUrl);
             xmlhttp.open("GET", theUrl, true);
             //calling syc requests on main thread is deprecated due to response lock-ups
             //in our case we need to know the response before we can initialise the websocket
