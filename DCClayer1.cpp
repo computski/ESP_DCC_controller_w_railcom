@@ -825,6 +825,12 @@ void IRAM_ATTR dc_init(uint32_t pin_pwm, uint32_t pin_dir, bool phase, bool inve
 /// Initialise UART for railcom, start listening for incoming data
 /// </summary>
 void railcomInit() {
+#ifndef PIN_RAILCOM_SYNC
+	_rcstate = RC_EXPECT_ID0;
+	//exit without reconfiguring serial
+	return;
+#endif // !PIN_RAILCOM_SYNC
+
 	Serial.println(F("\n\nEnable railcom"));
 	Serial.flush();
 	railcomRead(0, false, 1);
@@ -843,6 +849,11 @@ void railcomInit() {
 /// Call once per program loop
 /// </summary>
 void railcomLoop(void) {
+
+#ifndef PIN_RAILCOM_SYNC
+	//railcom not supported
+	return;
+#endif
 
 	uint8_t byteNew;
 	uint8_t	byteCount = 0;

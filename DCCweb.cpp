@@ -5,15 +5,17 @@
 #include "WiThrottle.h"
 
 /*
-This module handles all HTTP and Websocket connectivity.  HTTP is used to serve a static web page
-and then websockets are used for interaction on that page.  The websocket here is also used to support
-the JSON Throttle aka DigiTrains, if used.
+This module handles all Wifi connections, and webserver (HTTP) and Websocket connectivity
+HTTP is used to serve a static web page and then websockets are used for interaction on that page.  
+The websocket here is also used to support the JSON Throttle aka DigiTrains, if used.
 
 2024-03-25 migrate from SPIFFS to LittleFS
 https://randomnerdtutorials.com/install-esp8266-nodemcu-littlefs-arduino/  and BTW you cannot do file uploads using Arduino IDE 2x
 Note: with Visual Micro you change the FS type to upload under option15 in the dropdowns
 
 2024-04-26 migrate to ArduinoJson 7x see https://github.com/bblanchon/ArduinoJson
+
+2025-01-12 fixed WiFi and AP. You can connect to either, but not both together (as the softAP fails to send default gateway details to clients).
 
 */
 
@@ -81,7 +83,16 @@ void getHardware() {
 	doc["pwd"] = bootController.pwd;
 	doc["version"] = bootController.softwareVersion;
 	doc["wsPort"] = bootController.wsPort;
-	doc["IP"] = bootController.IP;
+	//2025-01-12 if we are not running as a softAP, we need to send the localIP
+	if (WiFi.getMode() == WIFI_AP) {
+		//send the AP default gateway
+		doc["IP"] = bootController.IP;
+	}
+	else {
+		//do not convert to cstr() else we get garbage at the client
+		doc["IP"] = WiFi.localIP().toString();
+	}
+
 	doc["action"] = "poll";
 	doc["STA_SSID"] = bootController.STA_SSID;
 	doc["STA_pwd"] = bootController.STA_pwd[0] == '\0' ? "none" : "*****";
@@ -138,45 +149,85 @@ void getRoster() {
 
 
 void nsDCCweb::startWebServices() {
-	//start WiFi
+	//start WiFi.  Running STA and AP together results in the AP failing to assign a default gateway IP to clients that connect to the AP
+	//instead, if the system has an STA SSID set (i.e. not YOUR_SSID) then we boot as Wifi Sta.  Else we boot as a softAP.
+	//Also if WiFi fails to connect in 20 sec we boot as softAP.
+	Serial.print("start Web");
 
-	Serial.printf("Setting soft-AP %s pwd=%s\n\r", bootController.SSID, bootController.pwd);
+	//BUG. The unit now connects to a network.  BUT websockets do not work because these are coded to pick up the IP address from a call to
+	//http://server-home-ip/hardware.htm and at present, the IP entry on that page is always the SoftAP IP.   It needs to change to the WiFi.localIP()
+	//if we are using WiFi mode
+	//BUG2. we don't seem to be able to change the SoftAP IP address.  I want to test that the pages can cope.
+	//browser-based JavaScript does not have direct access to the client’s IP address due to security reasons. You need to use an external API to fetch it.  Bummer.
+	//https://www.freecodecamp.org/news/javascript-refresh-page-how-to-reload-a-page-in-js/
+	//javascript can read location.href.  This will be //server-ip/page.htm  and then we can edit this to remove page.htm and substitute hardware
+	//and do this as a get call
 
-	WiFi.persistent(false);
-	WiFi.setAutoConnect(false);
-	WiFi.setAutoReconnect(false);
-	WiFi.mode(WIFI_AP);
 
-	//Passwords need to be >8 char and start with an alpha char
-	//failure to do so results in an open network
-	WiFi.softAP(bootController.SSID, bootController.pwd);
 
-	//wait for the softAP to start, then set the ip address
-	delayMicroseconds(500);
 
-	//IPAddress class requires the address to be provided as 4 octets
-	uint8_t myIP[4];
-	char* p = nullptr;
-	char ipBoot[17];
-	strcpy(ipBoot, bootController.IP);
+	bool runAsSoftAP = true;
 
-	//strtok modifies its arguement, have to use a copy.
-	p = strtok((char*)ipBoot, ",.");
-	int i = 0;
-	while (p != NULL) {
-		myIP[i] = atoi(p);
-		i++;
-		if (i == 4) break;
-		//more data?
-		p = strtok(NULL, ",.");
+	//do we have a network to connect to?
+	if (!((bootController.STA_SSID == NULL) || (strcmp(bootController.STA_SSID, "YOUR_SSID") == 0))) {
+		//attempt to connect for 20 sec
+		WiFi.begin(bootController.STA_SSID, bootController.STA_pwd);
+		Serial.print("start WiFi");
+
+		uint8_t n;
+		for (n = 0;n < 40;n++) {
+			Serial.print(".");
+			delay(500);
+			if (WiFi.status() == WL_CONNECTED) { 
+				Serial.printf("WiFi connected %s\n", WiFi.localIP().toString().c_str());
+				runAsSoftAP = false;
+				break; }
+		
+		}
+			
 	}
 
-	IPAddress Ip(myIP[0], myIP[1], myIP[2], myIP[3]);
-	IPAddress NMask(255, 255, 255, 0);
-	WiFi.softAPConfig(Ip, Ip, NMask);
-	//declare the IP of the AP
-	Serial.println(WiFi.softAPIP());
-	Serial.printf("mode %d\r\n", WiFi.getMode());
+
+	if (runAsSoftAP) {
+		Serial.printf("Setting soft-AP %s pwd=%s\n\r", bootController.SSID, bootController.pwd);
+		// mask original block
+		WiFi.persistent(false);
+		WiFi.setAutoConnect(false);
+		WiFi.setAutoReconnect(false);
+		WiFi.mode(WIFI_AP);
+
+		//Passwords need to be >8 char and start with an alpha char
+		//failure to do so results in an open network
+		WiFi.softAP(bootController.SSID, bootController.pwd);
+
+		//wait for the softAP to start, then set the ip address
+		delayMicroseconds(500);
+
+		//IPAddress class requires the address to be provided as 4 octets
+		uint8_t myIP[4];
+		char* p = nullptr;
+		char ipBoot[17];
+		strcpy(ipBoot, bootController.IP);
+
+		//strtok modifies its arguement, have to use a copy.
+		p = strtok((char*)ipBoot, ",.");
+		int i = 0;
+		while (p != NULL) {
+			myIP[i] = atoi(p);
+			i++;
+			if (i == 4) break;
+			//more data?
+			p = strtok(NULL, ",.");
+		}
+
+		IPAddress Ip(myIP[0], myIP[1], myIP[2], myIP[3]);
+		IPAddress NMask(255, 255, 255, 0);
+		WiFi.softAPConfig(Ip, Ip, NMask);
+		//declare the IP of the AP
+		Serial.println(WiFi.softAPIP());
+		Serial.printf("mode %d\r\n", WiFi.getMode());
+	}
+
 
 
 	// Start a Web server

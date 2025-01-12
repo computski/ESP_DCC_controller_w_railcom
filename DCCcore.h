@@ -24,13 +24,13 @@
 /*note, code at present does not support logging onto a network as a station*/
 struct CONTROLLER
 {
-	long	softwareVersion = 20241205;  //yyyymmdd captured as an integer
+	long	softwareVersion = 20250111;  //yyyymmdd captured as an integer
 	uint16_t	currentLimit = 1000;
 	uint8_t	voltageLimit = 15;
 	char SSID[21] = "DCC_ESP";
 	char pwd[21] = "";
 	char IP[17] = "192.168.6.1\0";   //note the actual setting requires comma separators
-	char STA_SSID[21] = "YOUR_SSID";  //SSID when running as a station on an external WiFi network
+	char STA_SSID[21] = "YOUR_SSID";  //SSID when running as a station on an external WiFi network  YOUR_SSID
 	char STA_pwd[21] = "";			//pwd for station
 	uint16_t wsPort = 12080;        //websocket port
 	uint16_t tcpPort = 12090;       //tcp port

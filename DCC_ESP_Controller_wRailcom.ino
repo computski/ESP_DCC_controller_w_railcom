@@ -1,6 +1,6 @@
 /*
 	Name:       ESP_DCC_Controller.ino
-	updated:	2024-04-26
+	updated:	2025-01-11
 	Author:     Julian Ossowski
 	Target:		WeMOS D1 (R1 or mini)
 	Note:		This device is 4M flash with 1M spiffs. The spiffs hold the webserver files
@@ -8,13 +8,9 @@
 	Serial:		default speed on the serial is 115200
 	IDE:		vMicro inside MS Visual studio.  Should also compile in the Arduino IDE.
 
-	Hardware note: the ESP is a 3v3 device, the LCD device is built for 5v but can run on 3v3 with a reduced backlight brightness
-	and it will also need a -ve voltage bias for the LCD.  This can be provided via a charge pump driven off the DCC signal.
-	OR it is possible to run the LCD, keypad and INA device off 5v, but it is necessary to diode-clamp the SDA line to 3v3.
-	Incidentally the nodeMCU only has a 3v3 regulator on board.  Vin is connected to the USB power which is assumed to be 5v.
-	It then feeds via a diode into the 3v3 regulator.  Its possible to feed Vin with 12v for example and the regulator will drop
-	this to 3v3, however the regulator will run hot.  Also the USB socket will have 12v present on it, which is a risk for any
-	device plugged into it.
+	Hardware note: the ESP is a 3v3 device, the 1602 LCD and its backpack can run on 5v, as can the INA current monitor.
+	It is recommended to run the I2C bus as 5v.  The ESP inputs are 5v tolerant and will work with a 5v I2C bus.
+	
 
  Important: Tested and works with these library versions
  Adafruit INA219 library 1.0.3 works
@@ -52,7 +48,6 @@
 #include "DCClayer1.h"
 #include "DCCweb.h"
 #include "WiThrottle.h"
-#include "Railcom.h"
 
 
 //PIN ASSIGNMENTS - see global.h
@@ -89,18 +84,17 @@ DCC_PINS
 
 DCCcoreBoot();
 
-	//restore settings from EEPROM
-	dccGetSettings();
+//restore settings from EEPROM
+dccGetSettings();
 
-/*2024-08-28 start railcom protocol*/
-	railcomInit(); 
-
-
-	nsJogWheel::jogInit();
+nsJogWheel::jogInit();
 
 #ifdef _DCCWEB_h		
 	nsDCCweb::startWebServices();
 #endif
+
+/*2024-08-28 start railcom protocol*/
+railcomInit();
 
 
 	/*2020-04-02 start WiThrottle protocol*/
@@ -146,10 +140,6 @@ void loop() {
 
 	//2024-08-28 process incoming railcom data
 	railcomLoop();
-
-
-
-
 
 
 
