@@ -73,8 +73,8 @@ otherwise, omit this line or change it to #define nROTARY_HW40
 
 #define nNODEMCU_CUSTOM_PCB_3
 #define nNODEMCU_DOIT_SHIELD
-#define nWEMOS_D1R1_AND_L298_SHIELD
-#define WEMOS_D_MINI_RAILCOM
+#define WEMOS_D1R1_AND_L298_SHIELD
+#define nWEMOS_D_MINI_RAILCOM
 
  #if defined(NODEMCU_OPTION1)
 	/*BOARD ONE, blue LCD on 3v3 supply using mjkdz backpack address 0x20
@@ -256,10 +256,12 @@ This also allows you to utilise an external heartbeat LED.
 #define PIN_JOG1	15  //swapped j1 and 2 to reverse direction
 #define PIN_JOG2	4
 
-
+//we drive the two independent H-bridges in the L298 shield with the same phase, and enable is kept high during DCC and during railcom cutout
 #define DCC_PINS \
-dcc_init(12,5,true,false);\
-dcc_init(14,13,true,false);
+dcc_init(12,5,true,true,true);\
+dcc_init(14,13,true,true,true);
+
+//Note: the L298 shield cannot support reading railCom, so we do NOT define PIN_RAILCOM_SYNC.
 
 
 #define KEYPAD_ADDRESS 0x21   //pcf8574
@@ -288,6 +290,9 @@ dcc_init(14,13,true,false);
 #define	PIN_JOG2	5 
 
 //GPIO15 goes to JP2 //IO15 has on board 10k pulldown, IO15 must be low for boot
+//Note: If using a LMD18200 /LMD18200 device set enableActiveDuring cutout to false
+//for all other types such as  L298 or IBT2 set this to true
+
 
 #define DCC_PINS \
 dcc_init(12,13,true,true,false);\

@@ -12,6 +12,10 @@
 /*handles a rotary encoder with pushbutton.  Uses interrupt on change
 the JOGWHEEL structure does not point to a specific LOCO index, rather
 each LOCO will have a flag indicating if is controlled by the jog
+
+There are two types of jogwheel commonly avaialable.  The HW-40 module has on-board pullups and if you use this
+you need to set the ROTARY_HW40 in global.h as you define your board.
+See the cpp file for more detail.
 */
 
 namespace nsJogWheel {
