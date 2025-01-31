@@ -5,6 +5,12 @@
 // 2023-09-24 added Railcom cutout
 // 2024-12-12 added Railcom decoder into layer 1
 
+//2025-01-13 BUG/ LIMITATION.  If a loco is not in the roster, then reading from it via POM is less reliable and often requires several read attempts.
+//The reason for this is the POM command is repeated only twice (I think) and subsequently there are no more railcom cutout slots which address the target loco.
+//Decoders respond to cv requests in railcom channel 2 which is a request-response format and requires the loco to specifically be addressed.
+//To fix this we'd need to send a few loco specific packets, perhaps a stop command.  But we'd need to specially inject these into the DCCbuffer.  Or perhaps we can repeat the
+//read command more times if we are aware that the loco is not in the roster.
+
 #ifndef _DCCLAYER1_h
 #define _DCCLAYER1_h
 

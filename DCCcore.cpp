@@ -8,7 +8,7 @@
 #include "DCCcore.h"
 #include "DCClayer1.h"
 #include "DCCweb.h"
-#include "Railcom.h"
+
 
 #include <LiquidCrystal_I2C.h>   //Github mlinares1998/NewLiquidCrystal
 //https://github.com/mlinares1998/NewLiquidCrystal
@@ -577,8 +577,11 @@ void dccPacketEngine(void) {
 			tests also prove that with all the other traffic for loco 6830, such as speed and func, it still responds to POM read correctly.
 			*/
 
+			//2025-01-15 BUG/LIMITATION. If the addressed loco is not in the roster, the read is less reliable presumably because once the POM command is sent
+			//there are no subsequent packets addressed to that loco, so it can never respond.
 
-			m_pom.packetCount = 4;
+			m_pom.packetCount = 10;  //increase from 4 to 10.  Each packet takes around 8 mS.  This did not help much.  Better if the loco is in the roster.
+			
 			if (false) {
 				//placeholder for accessory read
 			}
@@ -605,6 +608,7 @@ void dccPacketEngine(void) {
 				DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
 			}
 			DCCpacket.packetLen++;
+			
 			/*will exit with DCCpacket.packetLen set at correct length of i+1*/
 			m_pom.state = m_pom.state== POM_BYTE_READ ? POM_BYTE : POM_BIT;
 			//revert to transmitting packets, i.e. this packet gets sent
@@ -650,7 +654,7 @@ void dccPacketEngine(void) {
 			break;
 		}
 
-		//2024-05-06 send a cutout at end of POM packet
+		//2024-05-06 send a cutout at end of any/all POM packet
 		DCCpacket.doCutout = true;
 
 		break; //end POM case

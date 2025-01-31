@@ -267,6 +267,8 @@ void nsDCCweb::startWebServices() {
 
 	// start the websocket server
 	webSocket = new WebSocketsServer(bootController.wsPort);
+	//2025-01-31 enableHeatbeat added to fix bug where Wifi is lost but the websocket does not disconnect causing all WS services to slow down
+	webSocket->enableHeartbeat(2000, 1000, 1);
 	webSocket->begin();
 	webSocket->onEvent(webSocketEvent);          // if there's an incomming websocket message, go to function 'webSocketEvent'
 
@@ -290,11 +292,11 @@ void nsDCCweb::webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size
 	switch (type) {
 		
 	case WStype_DISCONNECTED:             // if the websocket is disconnected
-		trace(Serial.printf("[%u] Disconnected!\n", num);)
+		trace(Serial.printf("[%u] WS Disconnected!\n", num);)
 			break;
 	case WStype_CONNECTED: {              // if a new websocket connection is established
 		IPAddress ip = webSocket->remoteIP(num);
-		trace(Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\n", num, ip[0], ip[1], ip[2], ip[3], payload);)
+		trace(Serial.printf("[%u] Connected WS %d.%d.%d.%d url: %s\n", num, ip[0], ip[1], ip[2], ip[3], payload);)
 	}
 						 break;
 	case WStype_TEXT:                     // if new text data is received
