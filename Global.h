@@ -241,6 +241,7 @@ If you use a naked jogwheel, you need to arrange resistor pulldowns on all its o
 This also allows you to utilise an external heartbeat LED.
 */
 
+
 #define USE_ANALOG_MEASUREMENT
 //#define ANALOG_SCALING 1.95  //1.65v is 512 conversion for 1000mA (1.18 to match multimeter RMS)
 #define ANALOG_SCALING 3.9  //when using A and B in parallel  (2.36 to match multimeter RMS)
@@ -278,7 +279,7 @@ dcc_init(14,13,true,true,true);
 #define ANALOG_SCALING 3.9  //when using A and B in parallel  (2.36 to match multimeter RMS)
 
 //IDLE_SYNC is used to debug railcom only.  it puts a sync pulse on GPIO15
-#define PIN_RAILCOM_SYNC	15  //D8 GPIO15, normally would use for ESTOP as an input
+#define PIN_RAILCOM_SYNC_TOTEM	15  //D8 GPIO15, normally would use for ESTOP as an input
 
 #define	PIN_SCL		2 
 #define	PIN_SDA		0 

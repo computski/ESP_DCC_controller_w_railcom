@@ -33,6 +33,7 @@
 		bool  trackPower;
 		bool  fastTickFlag;
 		bool  doCutout;
+		bool  pinSyncInputTriggered;  //if PIN_RAILCOM_SYNC_INPUT used, this flag goes high if the input was triggered (active low)
 		uint8_t railcomPacketCount;  //used for railcom timeout
 	};
 
@@ -46,8 +47,6 @@
 	extern volatile DCCBUFFER DCCpacket;
 	
 	void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase, bool enableAsHigh, bool enableActiveDuringCutout);
-	void IRAM_ATTR dcc_init_LMD18200(uint32_t pin_pwm, uint32_t pin_dir, uint32_t pin_brake);
-	void IRAM_ATTR dc_init(uint32_t pin_pwm, uint32_t pin_dir, bool phase, bool invert);
 
 
 	//railcom related
@@ -73,7 +72,10 @@
 	* would probably override this, hence the need for a PNP isolator.  Actually 2k2 works, 5k1 does not.  so maybe internal WPU and 6n WPU would be enough to overcome this? the mini itself has a 12k
 	* pulldown and this does not get in the way of the ESP WPU.
 	* 
-	
+	* pinSyncInputTriggered is a flag and is set if we saw active low input on PIN_RAILCOM_SYNC_INPUT at the end of the railcom cutout. This flag must be reset in software.
+	* this allows us to dual-purpose that pin for both opto-isolator gating into the UART, and as an input
+	* Note: i might flow this trigger through to the keypad struct, this way it becomes a virtual key
+	* 
 	*/
 
 

@@ -19,7 +19,14 @@ rtc_reg_write decprecated warning...TIMER_REG_WRITE
 https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 
 2024-12-07 added railcom decode functionality
+
+2025-02-05 PIN_RAILCOM_SYNC_TOTEM defines a pin which supports the railcom sync signal as a totem pole output
+PIN_RAILCOM_SYNC_TOTEM defines a pin which supports railcom sync active low, but otherwise acts as an WPU input and detects a switch as active low
+
 */
+
+
+
 
 #include <c_types.h>
 #include <pwm.h>
@@ -68,16 +75,16 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 #define TIMER1_DIVIDE_BY_256            0x0008
 #define TIMER1_ENABLE_TIMER             0x0080
 
-
+//https://esp8266.ru/esp8266-gpio-register/
 struct gpio_regs {
-	uint32_t out;         /* 0x60000300 */
-	uint32_t out_w1ts;    /* 0x60000304 */
-	uint32_t out_w1tc;    /* 0x60000308 */
-	uint32_t enable;      /* 0x6000030C */
-	uint32_t enable_w1ts; /* 0x60000310 */
-	uint32_t enable_w1tc; /* 0x60000314 */
-	uint32_t in;          /* 0x60000318 */
-	uint32_t status;      /* 0x6000031C */
+	uint32_t out;         /* 0x60000300 entire output reg*/
+	uint32_t out_w1ts;    /* 0x60000304 selective outputs hi*/
+	uint32_t out_w1tc;    /* 0x60000308 selective outputs low*/
+	uint32_t enable;      /* 0x6000030C enable outputs (hi) or inputs (low)*/
+	uint32_t enable_w1ts; /* 0x60000310 seletive IO as output*/
+	uint32_t enable_w1tc; /* 0x60000314 selective IO as input*/
+	uint32_t in;          /* 0x60000318 Input level when IO is an input*/
+	uint32_t status;      /* 0x6000031C interrupt status*/
 	uint32_t status_w1ts; /* 0x60000320 */
 	uint32_t status_w1tc; /* 0x60000324 */
 };
@@ -108,7 +115,9 @@ static uint16_t brake_mask = 0;
 static uint16_t cutout_mask = 0;
 static uint16_t cutout_maskInverse = 0;
 
-#ifdef PIN_RAILCOM_SYNC
+#ifdef PIN_RAILCOM_SYNC_TOTEM
+static uint16_t dcc_sync = 0;
+#elif PIN_RAILCOM_SYNC_INPUT
 static uint16_t dcc_sync = 0;
 #endif
 
@@ -204,21 +213,32 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 
 		if (brake_mask == 0) {
 			//L298 and BT2 devices
-#ifdef PIN_RAILCOM_SYNC
+#ifdef PIN_RAILCOM_SYNC_TOTEM
 //concurrent writes to w1ts register will fail, instead you must OR values
 			gpio->out_w1ts = dcc_sync | dcc_mask;
+#elif PIN_RAILCOM_SYNC_INPUT
+	//2025-02-04 we flip this pin to input mode now, it has WPU enabled and the opto isolator (also with WPU) will self-enable
+			gpio->enable_w1tc = dcc_sync;
+			gpio->out_w1ts = dcc_mask;  //set bits to logic 1, we don't need to bother with dcc_sync as it is not an output
+
 #else
 			gpio->out_w1ts = dcc_mask;  //set bits to logic 1
 #endif  
 
 			gpio->out_w1tc = dcc_maskInverse;  //set bits to logic 0
+			
 
 		}
 		else
 		{//LMD 18200 device
-#ifdef PIN_RAILCOM_SYNC
+#ifdef PIN_RAILCOM_SYNC_TOTEM
 //concurrent writes to w1ts register will fail, instead you must OR values
 			gpio->out_w1ts = dcc_sync | dcc_mask;
+#elif PIN_RAILCOM_SYNC_INPUT
+//2025-02-04 we flip this pin to input mode now
+			gpio->enable_w1tc = dcc_sync;
+			gpio->out_w1ts = dcc_mask;  //set bits to logic 1, we don't need to bother with dcc_sync as it is not an output
+
 #else
 			gpio->out_w1ts = dcc_mask;  //set bits to logic 1
 #endif  
@@ -283,8 +303,15 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 
 			if (DCCpacket.trackPower) {
 
-#ifdef PIN_RAILCOM_SYNC
+#ifdef PIN_RAILCOM_SYNC_TOTEM
 				gpio->out_w1tc = dcc_mask | enable_maskInverse | dcc_sync;
+
+#elif PIN_RAILCOM_INPUT
+				//2025-02-04 READ the sync pin input before flipping it to an output, it is active low if button pressed
+				if ((gpio->in & dcc_sync) == 0) DCCpacket.pinSyncInputTriggered = true;
+
+				gpio->enable_w1ts = dcc_sync;  //dcc_sync pin now an output
+				gpio->out_w1tc = dcc_mask | enable_maskInverse | dcc_sync;  //dcc_sync as now an output
 #else
 				gpio->out_w1tc = dcc_mask | enable_maskInverse;
 #endif
@@ -293,10 +320,19 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 			}
 			else {
 
+				
+				
 				//OG code
-#ifdef PIN_RAILCOM_SYNC
+#ifdef PIN_RAILCOM_SYNC_TOTEM
 //concurrent writes to same w1tc register will fail, instead you must OR values
 				gpio->out_w1tc = dcc_mask | dcc_sync;
+
+#elif PIN_RAILCOM_SYNC_INPUT
+					//2025-02-04 READ the sync pin input before flipping it to an output, it is active low if button pressed
+				if ((gpio->in & dcc_sync) == 0) DCCpacket.pinSyncInputTriggered = true;
+				gpio->enable_w1ts = dcc_sync;  //dcc_sync pin now an output
+				gpio->out_w1tc = dcc_mask | dcc_sync; //dcc_sync as now an output
+
 #else
 				gpio->out_w1tc = dcc_mask;
 
@@ -307,9 +343,16 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 		}
 		else
 		{//LMD 18200 device with 3-pin drive
-#ifdef PIN_RAILCOM_SYNC
+#ifdef PIN_RAILCOM_SYNC_TOTEM
 	//concurrent writes to same w1tc register will fail, instead you must OR values
-			gpio->out_w1tc = brake_mask | dcc_sync; //dcc output is already low from prior state, now we just re-enable pipolar power
+			gpio->out_w1tc = brake_mask | dcc_sync; //dcc output is already low from prior state, now we just re-enable Bipolar power
+#elif PIN_RAILCOM_SYNC_INPUT
+		//2025-02-04 READ the sync pin input before flipping it to an output, it is active low if button pressed
+			if ((gpio->in & dcc_sync) == 0) DCCpacket.pinSyncInputTriggered = true;
+			gpio->enable_w1ts = dcc_sync;  //dcc_sync pin now an output
+			gpio->out_w1tc = brake_mask | dcc_sync;
+
+
 #else
 			gpio->out_w1tc = brake_mask;
 #endif
@@ -509,13 +552,7 @@ void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase, bool 
 	}
 
 
-#ifdef PIN_RAILCOM_SYNC
-	//2024-04-28 Special debug for railcom, make this sync pin an output
-	pinMode(PIN_RAILCOM_SYNC, OUTPUT);
-	digitalWrite(PIN_RAILCOM_SYNC, HIGH);
-	Serial.println(F("railcom sync"));
-	dcc_sync |= (1 << PIN_RAILCOM_SYNC);
-#endif
+
 
 
 #if PWM_USE_NMI
@@ -532,55 +569,6 @@ void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase, bool 
 }
 
 
-/// <summary>
-/// Initialise LMD18200 device. call once.
-/// </summary>
-/// <param name="pin_pwm">GPIO pin that supports dcc signal</param>
-/// <param name="pin_enable">GPIO pin that enables the output</param>
-/// <param name="pin_brake">GPIO pin that controls brake signal</param>
-void IRAM_ATTR dcc_init_LMD18200(uint32_t pin_pwm, uint32_t pin_dir, uint32_t pin_brake)
-{
-	//with the LMD18200 PWM is always held high.  We control dcc with the dir pin and assert power with the brake pin
-	//enable_mask is unused, brake_mask is
-	Serial.println(F("LMD18200"));
-	pinMode(pin_pwm, OUTPUT);
-	digitalWrite(pin_pwm, HIGH);  // keep pin permanently high, i.e. we can tie high with a jumper and save port
-
-	pinMode(pin_brake, OUTPUT);
-	digitalWrite(pin_brake, HIGH);  //Start with power disabled
-	brake_mask |= (1 << pin_brake);
-
-	pinMode(pin_dir, OUTPUT);
-	dcc_mask |= (1 << pin_dir);
-
-	//load with an IDLE packet
-	DCCpacket.data[0] = 0xFF;
-	DCCpacket.data[1] = 0;
-	DCCpacket.data[2] = 0xFF;
-	DCCpacket.packetLen = 3;
-
-#ifdef PIN_RAILCOM_SYNC
-	//2024-04-28 Special debug for railcom, make this sync pin an output
-	pinMode(PIN_RAILCOM_SYNC, OUTPUT);
-	digitalWrite(PIN_RAILCOM_SYNC, HIGH);
-	Serial.println(F("railcom sync"));
-	dcc_sync |= (1 << PIN_RAILCOM_SYNC);
-#endif
-
-
-#if PWM_USE_NMI
-	ETS_FRC_TIMER1_NMI_INTR_ATTACH(dcc_intr_handler);
-#else
-	ETS_FRC_TIMER1_INTR_ATTACH(dcc_intr_handler, NULL);
-
-#endif
-
-	TM1_EDGE_INT_ENABLE();
-	ETS_FRC1_INTR_ENABLE();
-	TIMER_REG_WRITE(FRC1_LOAD_ADDRESS, 0);  //This starts timer.  +++++++++ RTC_REG_WRITE is deprecated ++++++
-	timer->frc1_ctrl = TIMER1_DIVIDE_BY_16 | TIMER1_ENABLE_TIMER;
-
-}
 
 
 //2024-4-29 rather than infering H-bridge type from brake_mask==0 we should have conditional compilation based on a defined H_BRIDGE_TYPE
@@ -598,240 +586,42 @@ void IRAM_ATTR dcc_init_LMD18200(uint32_t pin_pwm, uint32_t pin_dir, uint32_t pi
 //but I have done this with careful selection of the drive pins.
 
 
-#pragma region DC CONTROL
 
-	//DC pwm routines
-#define DC_COUNT_RELOAD  140U   //10mS counting complete duty periods
-#define DUTY_PERIOD 357U  //14kHz with 200nS ticks
-#define KICK_COUNT 10U
-#define KICKS 3U
-static uint16_t pwm_mask = 0;
-static uint16_t pwm_maskInverse = 0;
-static uint16_t dir_mask = 0;
-static uint16_t dir_maskInverse = 0;
-static uint8_t  dcCount = 0;   //counts complete cycles, will trigger 10mS tick
-static uint16_t  lowDutyPeriod = DUTY_PERIOD;
-static uint16_t  hiDutyPeriod = 0;
-static uint8_t  hiLowState = 0;
-static int8_t	kickCount = KICK_COUNT;
-
-
-//interrupt handler for DC pwm mode
-static void IRAM_ATTR pwm_intr_handler(void) {
-	if (DCCpacket.trackPower) {
-
-		//have we finished high or low?  
-		if ((hiLowState == 0) && (hiDutyPeriod > 0)) {
-			//just finished a low, so load with high
-			//EXCEPT where hiDuty is zero in which case we just execute low again
-			WRITE_PERI_REG(&timer->frc1_load, hiDutyPeriod);
-			gpio->out_w1ts = pwm_mask;  //set bits to logic 1
-			gpio->out_w1tc = pwm_maskInverse;  //set bits to logic 0
-			hiLowState = 1;
-		}
-		else {
-			//just finished a hi, or hiDutyPeriod==0 so load with lo
-			WRITE_PERI_REG(&timer->frc1_load, lowDutyPeriod);
-			gpio->out_w1ts = pwm_maskInverse;  //set bits to logic 0
-			gpio->out_w1tc = pwm_mask;  //set bits to logic 1
-			hiLowState = 0;
-			//only increment dcCount on low duty periods
-			dcCount++;
-		}
-	}
-	else {
-		//track power off, load another full period of low
-		lowDutyPeriod = DUTY_PERIOD;
-		hiDutyPeriod = 0;
-		WRITE_PERI_REG(&timer->frc1_load, DUTY_PERIOD);
-		gpio->out_w1ts = pwm_maskInverse;  //set bits to logic 0
-		gpio->out_w1tc = pwm_mask;  //set bits to logic 1
-		dcCount++;
-		hiLowState = 0;
-	}
-
-	//this will only be triggered during a low period when we have more time for processing
-	if (dcCount >= DC_COUNT_RELOAD) {
-		DCCpacket.msTickFlag = true;
-		dcCount = 0;
-
-		//copy the last packet sent, don't care about the preamble
-		_TXbuffer.data[0] = DCCpacket.data[0];
-		_TXbuffer.data[1] = DCCpacket.data[1];
-		_TXbuffer.data[2] = DCCpacket.data[2];
-		//don't bother with data[3,4,5] as we will only respond to short addr 3, and 1 possibly 2 (extended)
-		//speed packets
-		_TXbuffer.packetLen = DCCpacket.packetLen;
-		//signal we are ready for another packet
-		DCCpacket.clearToSend = true;
-
-		//inspect the packet. we only care about loco 3, speed and dir
-		//S 9.2 para 40
-
-
-		if (_TXbuffer.data[0] == 3) {
-			//instruction is for loco 3, short addr 
-			if ((_TXbuffer.data[1] >> 6) == 0b01) {
-				//this is a basic speed/dir command 01DCSSSS
-				//C is the lsb of the speed code SSSS
-				//per S 9.2 para 50
-		//http://cpp.sh/9kmu6
-
-				if ((_TXbuffer.data[1] & 0b1111) <= 1) {
-					//0 or 1 indicate a stop condition C=don't care
-					lowDutyPeriod = DUTY_PERIOD;
-					hiDutyPeriod = 0;
-				}
-				else {
-					//calculate the speed, essentially we have a 5 bit resolution.
-					uint8_t j = (_TXbuffer.data[1] & 0b1111) << 1;
-					j += (_TXbuffer.data[1] & 0b10000) >> 4;  //add lsb 'C' bit
-					//step 1 is integer 4
-					j -= 3;  //rebase at one
-					//value will be between 1 and 28
-					//saftey feature, cap j at 28
-					j = j > 28 ? 28 : j;
-
-
-					//rebase logic.  basically no motor will move on less than 50% duty, so we should start 
-					//at that point and the control is really exerted over 50-100% duty
-
-					hiDutyPeriod = DUTY_PERIOD / 2;
-					for (j = j;j > 0;j--) {
-						hiDutyPeriod += DUTY_PERIOD / 56;
-					}
-					lowDutyPeriod = DUTY_PERIOD - hiDutyPeriod;
-					//speed done.  speed 1 means hiDutyPeriod is slightly over 50% duty
-
-				}
-
-
-				//check direction 01DCSSSS
-				if (_TXbuffer.data[1] & (1 << 5)) {
-					//forward
-					gpio->out_w1ts = dir_mask;
-					gpio->out_w1tc = dir_maskInverse;
-				}
-				else {
-					//reverse
-					gpio->out_w1ts = dir_maskInverse;
-					gpio->out_w1tc = dir_mask;
-				}
-
-			}
-			else if (_TXbuffer.data[1] == 0b111111) {
-				//126 speed step instr follows
-				//check direction
-				if (_TXbuffer.data[2] & (1 << 7)) {
-					//forward
-					gpio->out_w1ts = dir_mask;
-					gpio->out_w1tc = dir_maskInverse;
-				}
-				else {
-					//reverse
-					gpio->out_w1ts = dir_maskInverse;
-					gpio->out_w1tc = dir_mask;
-				}
-				//128 speed steps not implemented
-				/*
-				if (_TXbuffer.data[2] & 0b1111111 <=1) {
-					//0 or 1 indicate a stop condition
-					lowDutyPeriod = DUTY_PERIOD;
-				}
-				else {
-					//calculate the speed as 7 bits rebased to 1
-					uint8_t j = _TXbuffer.data[2] & 0b1111111;
-					j--;  //rebase at one
-						//value will be between 1 and 126
-					hiDutyPeriod = 0;
-					for (j = j;j > 0;j--) {
-						hiDutyPeriod += DUTY_PERIOD / 126;
-					}
-					//DEBUG hiDuty must be 13 minimum
-					if (hiDutyPeriod < 13) { hiDutyPeriod = 13; }
-
-					lowDutyPeriod = DUTY_PERIOD - hiDutyPeriod;
-					//speed done.  speed 1 means hiDutyPeriod is 3, so hopefully thats not too short
-				}
-				*/
-
-			}
-
-
-			//end packet inspection, all other packet types and all other locos are ignored
-		}
-
-		//kick logic. every KICK_COUNT x 10mS, put out KICKS x 10mS burst of 60% duty cycle
-		if ((--kickCount <= 0) && (hiDutyPeriod > 0)) {
-			if (hiDutyPeriod < DUTY_PERIOD / 16) {
-				hiDutyPeriod = DUTY_PERIOD / 16;
-				lowDutyPeriod = DUTY_PERIOD - hiDutyPeriod;
-				if (kickCount <= KICKS) kickCount = KICK_COUNT;
-			}
-		}
-
-	}
-
-}
-
-
-
-//call with a pwm pin and direction pin
-void IRAM_ATTR dc_init(uint32_t pin_pwm, uint32_t pin_dir, bool phase, bool invert) {
-	//load with an IDLE packet
-	DCCpacket.data[0] = 0xFF;
-	DCCpacket.data[1] = 0;
-	DCCpacket.data[2] = 0xFF;
-	DCCpacket.packetLen = 3;
-
-	pinMode(pin_pwm, OUTPUT);
-	pinMode(pin_dir, OUTPUT);
-
-	if (phase) {
-		pwm_mask |= (1 << pin_pwm);
-	}
-	else {
-		pwm_maskInverse |= (1 << pin_pwm);
-	}
-
-	if (invert) {
-		dir_maskInverse |= (1 << pin_dir);
-	}
-	else {
-		dir_mask |= (1 << pin_dir);
-	}
-
-
-
-#if PWM_USE_NMI
-	ETS_FRC_TIMER1_NMI_INTR_ATTACH(pwm_intr_handler);
-#else
-	ETS_FRC_TIMER1_INTR_ATTACH(pwm_intr_handler, NULL);
-#endif
-
-	TM1_EDGE_INT_ENABLE();
-	ETS_FRC1_INTR_ENABLE();
-	TIMER_REG_WRITE(FRC1_LOAD_ADDRESS, 0);  //This starts timer  ++++ RTC_REG_WRITE is deprecated ++++
-	timer->frc1_ctrl = TIMER1_DIVIDE_BY_16 | TIMER1_ENABLE_TIMER;
-}
-
-
-#pragma endregion
 
 
 #pragma region RAILCOM
 
+
+
 /// <summary>
 /// Initialise UART for railcom, start listening for incoming data
+/// Also configure the railcom sync pin either not at all, as totem pole or as a IO line
 /// </summary>
 void railcomInit() {
-#ifndef PIN_RAILCOM_SYNC
+
+#ifdef PIN_RAILCOM_SYNC_INPUT
+//configure pin as input, the ISR will then toggle this between an input and an output
+//but I define as an input here as its the only way I know to apply the WPU.
+//it is first set as an output and driven low
+	pinMode(PIN_RAILCOM_SYNC_INPUT, OUTPUT);
+	digitalWrite(PIN_RAILCOM_SYNC_INPUT ,LOW);
+	pinMode(PIN_RAILCOM_SYNC_INPUT, INPUT_PULLUP);
+	dcc_sync |= (1 << PIN_RAILCOM_SYNC_INPUT);
+	Serial.println(F("\n\nEnable railcom input"));
+#elif PIN_RAILCOM_SYNC_TOTEM
+	//Railcom, make this sync pin a totem-pole output
+	pinMode(PIN_RAILCOM_SYNC_TOTEM, OUTPUT);
+	digitalWrite(PIN_RAILCOM_SYNC_TOTEM, HIGH);
+	Serial.println(F("railcom sync totem"));
+	dcc_sync |= (1 << PIN_RAILCOM_SYNC_TOTEM);
+	
+#else
 	_rcstate = RC_EXPECT_ID0;
 	//exit without reconfiguring serial
 	return;
 #endif // !PIN_RAILCOM_SYNC
 
-	Serial.println(F("\n\nEnable railcom"));
+
 	Serial.flush();
 	railcomRead(0, false, 1);
 	
@@ -850,7 +640,9 @@ void railcomInit() {
 /// </summary>
 void railcomLoop(void) {
 
-#ifndef PIN_RAILCOM_SYNC
+#ifdef PIN_RAILCOM_SYNC_TOTEM
+#elif PIN_RAILCOM_SYNC_INPUT
+#else
 	//railcom not supported
 	return;
 #endif
