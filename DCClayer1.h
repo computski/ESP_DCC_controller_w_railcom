@@ -46,7 +46,8 @@
 
 	extern volatile DCCBUFFER DCCpacket;
 	
-	void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase, bool enableAsHigh, bool enableActiveDuringCutout);
+	//void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase, bool enableAsHigh, bool enableActiveDuringCutout);
+	void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase);
 
 
 	//railcom related
@@ -64,17 +65,22 @@
 	* is junk data and not part of a message.   We can improve this situation by gating pin 7 of the 6N137 with the railcom sync signal.  This means we only present serial data to be 
 	* ESP serial port during the cutout periods.  This greatly improves the reliabilty of reads.
 	* D8 GPIO15 is used as the railcom sync pin and normally this would be estop (pull to ground). However, it must be low at boot.  Not a problem because pin 7 on the 6n137 has 
-	* a weak pullup, so we need to put a stronger pull-down on this, say 1k and we should be good..
-	* if PIN_ESTOP is left undefined, then it can be assigned via PIN_RAILCOM_SYNC
-	* Can it be used for both?  Answer is yes, because outside of a railcom cutout, we can breiefly re-purpose the pin as an input, read it and if we see low, trigger estop.
-	* pulling it low will need to be via a resistor so it does not damage the pin when used as a railcom sync output.  and also it won't damage the 6n137.
-	* But that said, we would need to use a PNP pulldown off GPIO15 and into the 6n317 enable, because we'd need to repurpose the GP to be WPU and a 1k res direcly on the pin to ground
-	* would probably override this, hence the need for a PNP isolator.  Actually 2k2 works, 5k1 does not.  so maybe internal WPU and 6n WPU would be enough to overcome this? the mini itself has a 12k
-	* pulldown and this does not get in the way of the ESP WPU.
+	* a weak pullup, so we need to put a stronger pull-down on this, say 2k2.
 	* 
-	* pinSyncInputTriggered is a flag and is set if we saw active low input on PIN_RAILCOM_SYNC_INPUT at the end of the railcom cutout. This flag must be reset in software.
-	* this allows us to dual-purpose that pin for both opto-isolator gating into the UART, and as an input
-	* Note: i might flow this trigger through to the keypad struct, this way it becomes a virtual key
+	* We have two options
+	* PIN_RAILCOM_SYNC
+	* D8 GPIO15 will be a totem pole output.  We need 2k2 to ground on this pin, because the on-module 12k pulldown is not enough to overcome the 6n137 Enable pin's WPU which is
+	* in the 5k-7k range, and remember it pulls to 5v as the opto chip is given a 5v supply.
+	* In this mode, D8 will go high when we want to gate-in the railcom serial data 
+	*  
+	* PIN_RAILCOM_SYNC_INPUT
+	* A pushbutton is connected via 680R to D8 and pulls it to 3v3 when active.
+	* D8 drives an NPN 2N3904 via a 1k base resistor.  The collector is connected to the 6N137 Enable pin.  Emitter to ground.
+	* During railcom blanking period, D8 is driven high. This masks out the opto and the pushbutton.
+	* D8 is driven low and is held low for the entire RC cutout except at the end, where it is breifly switched to a regular INPUT
+	* and is read.  It will read high if the pushbutton is active.  When D8 is active low, the pushbutton has no effect and cannot corrupt incoming serial.
+	* 
+	* pinSyncInputTriggered is a flag and is set if we saw active high input on PIN_RAILCOM_SYNC_INPUT at the end of the railcom cutout. This flag must be reset in software.
 	* 
 	*/
 

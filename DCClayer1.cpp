@@ -23,6 +23,13 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 2025-02-05 PIN_RAILCOM_SYNC_TOTEM defines a pin which supports the railcom sync signal as a totem pole output
 PIN_RAILCOM_SYNC_TOTEM defines a pin which supports railcom sync active low, but otherwise acts as an WPU input and detects a switch as active low
 
+The hardware (blue PCB) needs a mod using a 2k2 resistor to pull the D8 pin (PIN_RAILCOM_SYNC_TOTEM) to ground.  This is because the ESP module 12k pulldown resistor is
+insufficient to pull down against the WPU in the 3N137 Opto, and this causes boot to fail as the pin must be low at boot.  2k2 directly to ground fixes this, but it does require
+an active totem drive to overcome this 2k2.
+
+If we want to use the pin as PIN_RAILCOM_SYNC_INPUT then we will need to have D8 drive a 5k1 base resistor into a PNP which will pull the Opto enable pin to ground.  We then drive
+D8 with active to ground or as WPU input during the railcom cutout.  Boot works because the pin will see low at boot (pin boots as input no WPU).  Input WPU will work against the 12k
+module pull down and if we drive the pin active low, the PNP conducts and disables the OPTO outside of cutouts.
 */
 
 
@@ -108,18 +115,9 @@ volatile DCCBUFFER DCCpacket;  //externally visible
 volatile DCCBUFFER _TXbuffer;   //internal to this module
 
 static uint16_t dcc_mask = 0;
-static uint16_t dcc_maskInverse = 0;
+static uint16_t dcc_maskInverse = 0;   //if this remains zero, we are using an LMD device
 static uint16_t enable_mask = 0;
-static uint16_t enable_maskInverse = 0;
-static uint16_t brake_mask = 0;
-static uint16_t cutout_mask = 0;
-static uint16_t cutout_maskInverse = 0;
-
-#ifdef PIN_RAILCOM_SYNC_TOTEM
-static uint16_t dcc_sync = 0;
-#elif PIN_RAILCOM_SYNC_INPUT
-static uint16_t dcc_sync = 0;
-#endif
+static uint16_t sync_mask = 0;  //always defined but if it remains zero, railcom is not enabled.
 
 static uint8_t  dccCount;
 
@@ -156,7 +154,7 @@ enum RC_STATE
 	RC_TIMEOUT,
 };
 
-
+# define LMD18200T_DEVICE	0
 
 
 /*Interrupt handler for DCC
@@ -210,82 +208,45 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 	case DCC_CUTOUT_START:
 		WRITE_PERI_REG(&timer->frc1_load, ticksCutoutStart);
 		//this is a pseudo start to a new 1 bit, we high akin to _H on the other bit types
-
-		if (brake_mask == 0) {
-			//L298 and BT2 devices
-#ifdef PIN_RAILCOM_SYNC_TOTEM
-//concurrent writes to w1ts register will fail, instead you must OR values
-			gpio->out_w1ts = dcc_sync | dcc_mask;
-#elif PIN_RAILCOM_SYNC_INPUT
-	//2025-02-04 we flip this pin to input mode now, it has WPU enabled and the opto isolator (also with WPU) will self-enable
-			gpio->enable_w1tc = dcc_sync;
-			gpio->out_w1ts = dcc_mask;  //set bits to logic 1, we don't need to bother with dcc_sync as it is not an output
-
-#else
-			gpio->out_w1ts = dcc_mask;  //set bits to logic 1
-#endif  
-
-			gpio->out_w1tc = dcc_maskInverse;  //set bits to logic 0
-			
-
+		//Railcom sync is in blanking state at this point, and only changes at the start and end of the actual cutout
+		
+		if (dcc_maskInverse == LMD18200T_DEVICE) {	//zero indictes this is a LMD18200T device
+			gpio->out_w1ts = dcc_mask;
 		}
-		else
-		{//LMD 18200 device
-#ifdef PIN_RAILCOM_SYNC_TOTEM
-//concurrent writes to w1ts register will fail, instead you must OR values
-			gpio->out_w1ts = dcc_sync | dcc_mask;
-#elif PIN_RAILCOM_SYNC_INPUT
-//2025-02-04 we flip this pin to input mode now
-			gpio->enable_w1tc = dcc_sync;
-			gpio->out_w1ts = dcc_mask;  //set bits to logic 1, we don't need to bother with dcc_sync as it is not an output
-
-#else
-			gpio->out_w1ts = dcc_mask;  //set bits to logic 1
-#endif  
-			//leave output enabled as bi-polar as normal
-
+		else {//L298 or IBT device
+			gpio->out_w1ts = dcc_mask;
+			gpio->out_w1tc = dcc_maskInverse;
 		}
-
-
-		//2024-4-28 MORE WORK to be done.  mask_brake !=0 then we are in LMD18200 mode 
-		//If no brake was set (i.e. brake_mask===0) then we are driving the h bridge through the dcc_mask pins and ignoring dcc_mask inverse
-		//dcc_mask needs to be driven low, i.e. all DCC pins in phase.  and do we need a psuedo start to a new bit?  is the edge supposed to go hi? YES for TcS
-		//so yes it is a pseudo one_h part but it actually ends with a low part.
-		//it happens after every packet so arguably its theiving one of the series of preamble 1s that start the next packet.  Or adding a 15th preamble-railcom bit if you like
-		//So actually we need to control the H bridge more precisely.  we have to start a 1 bit then after TcS initiate a cutout.
 		break;
-
-
-		/*enableAciveDuringCutout
-		The code atm will keep enable active throughout the rc-cutout, but if we are using an LMD, we need it to disable-enable during
-		the cutout and re-enable it after.  it also needs to not conflict with power trip
-
-		*/
-
 
 	case DCC_CUTOUT:
 		WRITE_PERI_REG(&timer->frc1_load, ticksCutout);
 		//assert a railcom cutout by taking all H bridge outputs to logic low and asserting ground on both rails
-		//the H bridge needs to remain enabled
+		//the H bridge needs to remain enabled.  dcc_sync is asserted during the cutout period.
 
-		if (brake_mask == 0) {
-			//take all outputs to ground and assert enabled per the cutout_mask
-			//unless power is off, in which case enabled pins were set to correct state elsewhere and we will not change them
-
-			if (DCCpacket.trackPower) {
-				gpio->out_w1tc = dcc_mask | dcc_maskInverse | cutout_maskInverse;
-				gpio->out_w1ts = cutout_mask;
-			}
-			else {
-				//power disabled elsewhere, to not re-power.  only set dcc bits
-				gpio->out_w1tc = dcc_mask | dcc_maskInverse;
-			}
+		if (dcc_maskInverse == LMD18200T_DEVICE) {
+			//LMD device 2 pin mode, take its enable pin (PWM) low, this will drive both X+Y high
+#ifdef PIN_RAILCOM_SYNC_INPUT
+				gpio->out_w1tc = enable_mask | sync_mask;	
+#else 
+				gpio->out_w1tc = enable_mask;
+				gpio->out_w1ts = sync_mask;
+#endif
 
 		}
 		else
-		{//LMD 18200 device configured for 3 pin drive
-			gpio->out_w1ts = brake_mask;  //set brake logic hi
-			gpio->out_w1tc = dcc_mask;  //set outputs logic low
+		{
+			//L298+IBT devices, enable is controlled in the power trip block.  We need to assert both X+Y lines low
+			//remember X is controlled by dcc_mask, Y by dcc_maskInverse;
+				
+#ifdef PIN_RAILCOM_SYNC_INPUT
+					gpio->out_w1tc = dcc_mask | dcc_maskInverse | sync_mask;
+				
+#else 
+					gpio->out_w1tc = dcc_mask | dcc_maskInverse;
+					gpio->out_w1ts = sync_mask;
+#endif
+
 
 		}
 
@@ -297,66 +258,42 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 		//this is a pseudo end of a bit, assert a low-half of a bit
 		//at the end of the cutout, we need to re-assert enable as BAU level (assuming power is on)
 
+		//at the end of the cutout we re-establish railcom blanking 
 
-		if (brake_mask == 0) {
-			//output a pseudo low part of bit
-
-			if (DCCpacket.trackPower) {
-
-#ifdef PIN_RAILCOM_SYNC_TOTEM
-				gpio->out_w1tc = dcc_mask | enable_maskInverse | dcc_sync;
-
-#elif PIN_RAILCOM_INPUT
-				//2025-02-04 READ the sync pin input before flipping it to an output, it is active low if button pressed
-				if ((gpio->in & dcc_sync) == 0) DCCpacket.pinSyncInputTriggered = true;
-
-				gpio->enable_w1ts = dcc_sync;  //dcc_sync pin now an output
-				gpio->out_w1tc = dcc_mask | enable_maskInverse | dcc_sync;  //dcc_sync as now an output
+		if (dcc_maskInverse == LMD18200T_DEVICE) {
+			//LMD device 2 pin mode, take its enable pin (PWM) high, provided we are not in power cutout
+			
+#ifdef PIN_RAILCOM_SYNC_INPUT
+			//switch sync pin to be and input, then read it before asserting railcom blanking
+			if (DCCpacket.trackPower) gpio->out_w1ts = enable_mask | sync_mask;
+			gpio->enable_w1tc = sync_mask;   //pin_railcom as input
+			if ((gpio->in & sync_mask) != 0) { DCCpacket.pinSyncInputTriggered = true; }  //active hi?
+			gpio->enable_w1ts = sync_mask; //pin_railcom as output
 #else
-				gpio->out_w1tc = dcc_mask | enable_maskInverse;
+			if (DCCpacket.trackPower) gpio->out_w1ts = enable_mask;
+			gpio->out_w1tc = sync_mask;
 #endif
-				gpio->out_w1ts = dcc_maskInverse | enable_mask;
-
-			}
-			else {
-
-				
-				
-				//OG code
-#ifdef PIN_RAILCOM_SYNC_TOTEM
-//concurrent writes to same w1tc register will fail, instead you must OR values
-				gpio->out_w1tc = dcc_mask | dcc_sync;
-
-#elif PIN_RAILCOM_SYNC_INPUT
-					//2025-02-04 READ the sync pin input before flipping it to an output, it is active low if button pressed
-				if ((gpio->in & dcc_sync) == 0) DCCpacket.pinSyncInputTriggered = true;
-				gpio->enable_w1ts = dcc_sync;  //dcc_sync pin now an output
-				gpio->out_w1tc = dcc_mask | dcc_sync; //dcc_sync as now an output
-
-#else
-				gpio->out_w1tc = dcc_mask;
-
-#endif
-				gpio->out_w1ts = dcc_maskInverse;
-			}
-
 		}
 		else
-		{//LMD 18200 device with 3-pin drive
-#ifdef PIN_RAILCOM_SYNC_TOTEM
-	//concurrent writes to same w1tc register will fail, instead you must OR values
-			gpio->out_w1tc = brake_mask | dcc_sync; //dcc output is already low from prior state, now we just re-enable Bipolar power
-#elif PIN_RAILCOM_SYNC_INPUT
-		//2025-02-04 READ the sync pin input before flipping it to an output, it is active low if button pressed
-			if ((gpio->in & dcc_sync) == 0) DCCpacket.pinSyncInputTriggered = true;
-			gpio->enable_w1ts = dcc_sync;  //dcc_sync pin now an output
-			gpio->out_w1tc = brake_mask | dcc_sync;
+		{//L298+IBT devices, enable is controlled in the power trip block.
+			
+#ifdef PIN_RAILCOM_SYNC_INPUT
+			gpio->enable_w1tc = sync_mask;   //pin_railcom as input
+			if ((gpio->in & sync_mask) != 0) { DCCpacket.pinSyncInputTriggered = true; }  //active hi?
+			gpio->enable_w1ts = sync_mask; //pin_railcom as output
 
-
+			gpio->out_w1ts = dcc_mask | sync_mask;
+			gpio->out_w1tc = dcc_maskInverse ;
 #else
-			gpio->out_w1tc = brake_mask;
+			gpio->out_w1ts = dcc_mask;
+			gpio->out_w1tc = dcc_maskInverse | sync_mask;
 #endif
+		
+//we exit DCC_CUTOUT_END with railcom blanking set, this does not change (PIN_RAILCOM_SYNC_) until start of next DCC_CUTOUT state
+		
 		}
+
+
 		break;
 		/*the delay gets executed and the block below sets next-state and queues up next databit*/
 	}
@@ -366,25 +303,24 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 	//this memory barrier compiler instruction is left in from the code I leveraged
 	asm volatile ("" : : : "memory");
 
-	//POWER OVERLOAD: do power assert here, before we change DCCperiod in the next block
+	//POWER TRIP: do power assert here, before we change DCCperiod in the next block
+	//i.e. at this point we just asserted the current DCCperiod state, the next block queues up the next-state
 	if (++dccCount >= ticksMS) {
 		dccCount = 0;
 		DCCpacket.msTickFlag = true;
 
 		//2024-12-12 we do not want to accidentally modify the enable pins that were set during the cutout period		
 
-		if ((brake_mask == 0) && (DCCperiod != DCC_CUTOUT)) {
-			//L298 and IBT devices, control based on the enable pin
-			gpio->out_w1ts = DCCpacket.trackPower ? enable_mask : enable_maskInverse;
-			gpio->out_w1tc = DCCpacket.trackPower ? enable_maskInverse : enable_mask;
+		if ((dcc_maskInverse == 0) && (DCCperiod != DCC_CUTOUT)) {
+			//LMD in 2 pin mode.  DCC_CUTOUT is a special period as this requires PWM (enable) to stay low
+			//so this is a do nothing block because PWM (enable) was already set in the bit state above. 
 		}
 		else
-		{//LMD 18200 device in 3 pin config. The PWM pin is always high.  Taking brake high will ensure
-		//both output drivers have the same polarity as dictated by dir, i.e we don't care about dir
-			gpio->out_w1ts = DCCpacket.trackPower ? 0 : brake_mask;  //power off, assert brake high
-			gpio->out_w1tc = DCCpacket.trackPower ? brake_mask : 0;  //power on, assert brake low
+		{//L298 and IBT devices, control based on the enable pin in all DCC states
+		//plus LMD outside of the DCC_CUTOUT state is also based on the enable pin
+			if (DCCpacket.trackPower) { gpio->out_w1ts = enable_mask; }
+			else { gpio->out_w1tc = enable_mask; }
 		}
-
 	}
 
 
@@ -500,6 +436,7 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 	}//end DCC period switch
 
 
+
 	//one millisecond fast tick flag
 	DCCpacket.fastTickFlag = ((dccCount % ticksMSfast) == 0) ? true : false;
 
@@ -512,11 +449,10 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 /// Initialisation. call repeatedly to activate additional DCC outputs
 /// </summary>
 /// <param name="pin_dcc">GPIO pin to carry DCC signal</param>
-/// <param name="pin_enable">GPIO pin to enable power</param>
+/// <param name="pin_enable">GPIO pin to enable power. Active high.</param>
 /// <param name="phase">phase of DCC signal</param>
-/// <param name="enableAsHigh">enable power logic level</param>
-/// <param name="enableAciveDuringCutout">enable logic kept active during cutout</param>
-void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase, bool enableAsHigh, bool enableAciveDuringCutout)
+
+void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase)
 {
 	//load with an IDLE packet
 	DCCpacket.data[0] = 0xFF;
@@ -536,20 +472,8 @@ void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase, bool 
 	}
 
 	//set up enable pin(s)
-	if (enableAsHigh) {
-		enable_mask |= (1 << pin_enable);
-	}
-	else {
-		enable_maskInverse |= (1 << pin_enable);
-	}
+	enable_mask |= (1 << pin_enable);
 
-	//set up cutout mask
-	if (enableAciveDuringCutout) {
-		cutout_mask |= (1 << pin_enable);
-	}
-	else {
-		cutout_maskInverse |= (1 << pin_enable);
-	}
 
 
 
@@ -600,27 +524,25 @@ void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase, bool 
 void railcomInit() {
 
 #ifdef PIN_RAILCOM_SYNC_INPUT
-//configure pin as input, the ISR will then toggle this between an input and an output
-//but I define as an input here as its the only way I know to apply the WPU.
-//it is first set as an output and driven low
+//Pin will drive as totem pole, but inverted as it controls an NPN
+//ISR with briefly switch to INPUT at very end of RC cutout and read.
+//it is first set as an output and driven high
 	pinMode(PIN_RAILCOM_SYNC_INPUT, OUTPUT);
-	digitalWrite(PIN_RAILCOM_SYNC_INPUT ,LOW);
-	pinMode(PIN_RAILCOM_SYNC_INPUT, INPUT_PULLUP);
-	dcc_sync |= (1 << PIN_RAILCOM_SYNC_INPUT);
-	Serial.println(F("\n\nEnable railcom input"));
+	digitalWrite(PIN_RAILCOM_SYNC_INPUT ,HIGH);
+	sync_mask |= (1 << PIN_RAILCOM_SYNC_INPUT);
+	Serial.println(F("\n\nrailcom sync input"));
 #elif PIN_RAILCOM_SYNC_TOTEM
 	//Railcom, make this sync pin a totem-pole output
 	pinMode(PIN_RAILCOM_SYNC_TOTEM, OUTPUT);
 	digitalWrite(PIN_RAILCOM_SYNC_TOTEM, HIGH);
-	Serial.println(F("railcom sync totem"));
-	dcc_sync |= (1 << PIN_RAILCOM_SYNC_TOTEM);
-	
+	Serial.println(F("\n\nrailcom sync totem"));
+	sync_mask |= (1 << PIN_RAILCOM_SYNC_TOTEM);
 #else
 	_rcstate = RC_EXPECT_ID0;
 	//exit without reconfiguring serial
+	//note that dcc_sync will remain as zero and thus have no effect on set/clear gpio bits
 	return;
 #endif // !PIN_RAILCOM_SYNC
-
 
 	Serial.flush();
 	railcomRead(0, false, 1);

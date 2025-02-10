@@ -73,8 +73,8 @@ otherwise, omit this line or change it to #define nROTARY_HW40
 
 #define nNODEMCU_CUSTOM_PCB_3
 #define nNODEMCU_DOIT_SHIELD
-#define WEMOS_D1R1_AND_L298_SHIELD
-#define nWEMOS_D_MINI_RAILCOM
+#define nWEMOS_D1R1_AND_L298_SHIELD
+#define WEMOS_D_MINI_RAILCOM
 
  #if defined(NODEMCU_OPTION1)
 	/*BOARD ONE, blue LCD on 3v3 supply using mjkdz backpack address 0x20
@@ -259,8 +259,8 @@ This also allows you to utilise an external heartbeat LED.
 
 //we drive the two independent H-bridges in the L298 shield with the same phase, and enable is kept high during DCC and during railcom cutout
 #define DCC_PINS \
-dcc_init(12,5,true,true,true);\
-dcc_init(14,13,true,true,true);
+dcc_init(12,5,true);\
+dcc_init(14,13,true);
 
 //Note: the L298 shield cannot support reading railCom, so we do NOT define PIN_RAILCOM_SYNC.
 
@@ -279,7 +279,8 @@ dcc_init(14,13,true,true,true);
 #define ANALOG_SCALING 3.9  //when using A and B in parallel  (2.36 to match multimeter RMS)
 
 //IDLE_SYNC is used to debug railcom only.  it puts a sync pulse on GPIO15
-#define PIN_RAILCOM_SYNC_TOTEM	15  //D8 GPIO15, normally would use for ESTOP as an input
+#define PIN_RAILCOM_SYNC_INPUT	15  //D8 GPIO15, normally would use for ESTOP as an input
+#define nPIN_RAILCOM_SYNC_TOTEM 15
 
 #define	PIN_SCL		2 
 #define	PIN_SDA		0 
@@ -294,23 +295,15 @@ dcc_init(14,13,true,true,true);
 //Note: If using a LMD18200 /LMD18200 device set enableActiveDuring cutout to false
 //for all other types such as  L298 or IBT2 set this to true
 
-
+//this block for L298 and IBT2 devices
 #define DCC_PINS \
-dcc_init(12,13,true,true,false);\
-dcc_init(14,13,false,true,false);
+dcc_init(12,13,true);\
+dcc_init(14,13,false);
 
-//last switch is false for LMD, true for 298 and IBT
-
-
-
-
-//note these pins define dcc output, enable output, phase of dcc and inversion of enable
-//for debug I have taken antiphase dcc on one pin.
-//2024-11-01 above is suitable for L298
-
+//this block for LMD on 2-pin control.  no dcc_maskInverse is defined
 #define nDCC_PINS \
-dcc_init_LMD18200(13,14,12);
-//when i rewire board, will use this single entry
+dcc_init(12,13,true);
+
 
 
 #define nKEYPAD_ADDRESS 0x21   //pcf8574
