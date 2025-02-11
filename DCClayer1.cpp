@@ -24,12 +24,12 @@ https://github.com/esp8266/Arduino/blob/master/tools/sdk/include/eagle_soc.h
 PIN_RAILCOM_SYNC_TOTEM defines a pin which supports railcom sync active low, but otherwise acts as an WPU input and detects a switch as active low
 
 The hardware (blue PCB) needs a mod using a 2k2 resistor to pull the D8 pin (PIN_RAILCOM_SYNC_TOTEM) to ground.  This is because the ESP module 12k pulldown resistor is
-insufficient to pull down against the WPU in the 3N137 Opto, and this causes boot to fail as the pin must be low at boot.  2k2 directly to ground fixes this, but it does require
+insufficient to pull down against the WPU in the 6N137 Opto, and this causes boot to fail as the pin must be low at boot.  2k2 directly to ground fixes this, but it does require
 an active totem drive to overcome this 2k2.
 
-If we want to use the pin as PIN_RAILCOM_SYNC_INPUT then we will need to have D8 drive a 5k1 base resistor into a PNP which will pull the Opto enable pin to ground.  We then drive
-D8 with active to ground or as WPU input during the railcom cutout.  Boot works because the pin will see low at boot (pin boots as input no WPU).  Input WPU will work against the 12k
-module pull down and if we drive the pin active low, the PNP conducts and disables the OPTO outside of cutouts.
+If we want to use the pin as PIN_RAILCOM_SYNC_INPUT then we will need to have D8 drive a 2k2 base resistor into a NPN which will pull the Opto enable pin to ground.  We then drive
+D8 with inverse logic, i.e. it is high during the railcom blanking period, and low during the railcom cutout.  It become a WPD (12k) input at DCC_CUTOUT_END when it is read and
+DCCpacket.pinSyncInputTriggered is set if we see active hi.  The pushbutton must pull D8 to 3v3 via a 680R resistor.  This is because D8 is active low during the railcom cutout.
 */
 
 
@@ -254,21 +254,25 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 		break;
 
 	case DCC_CUTOUT_END:
+#ifdef PIN_RAILCOM_SYNC_INPUT
+		//pin_railcom as input. Do this now, because it takes a finite time (<1uS) for the input value to propage to gpio->in
+		//you cannot set as input and read immediately
+		gpio->enable_w1tc = sync_mask;   
+#endif
 		WRITE_PERI_REG(&timer->frc1_load, ticksCutoutEnd);
 		//this is a pseudo end of a bit, assert a low-half of a bit
 		//at the end of the cutout, we need to re-assert enable as BAU level (assuming power is on)
-
 		//at the end of the cutout we re-establish railcom blanking 
+		
 
 		if (dcc_maskInverse == LMD18200T_DEVICE) {
 			//LMD device 2 pin mode, take its enable pin (PWM) high, provided we are not in power cutout
 			
 #ifdef PIN_RAILCOM_SYNC_INPUT
-			//switch sync pin to be and input, then read it before asserting railcom blanking
-			if (DCCpacket.trackPower) gpio->out_w1ts = enable_mask | sync_mask;
-			gpio->enable_w1tc = sync_mask;   //pin_railcom as input
-			if ((gpio->in & sync_mask) != 0) { DCCpacket.pinSyncInputTriggered = true; }  //active hi?
+			//read input, then switch pin_railcom to be an output and assert railcom blanking
+			if ((READ_PERI_REG(&gpio->in) & sync_mask) != 0) { DCCpacket.pinSyncInputTriggered = true; }
 			gpio->enable_w1ts = sync_mask; //pin_railcom as output
+			if (DCCpacket.trackPower) gpio->out_w1ts = enable_mask | sync_mask;	
 #else
 			if (DCCpacket.trackPower) gpio->out_w1ts = enable_mask;
 			gpio->out_w1tc = sync_mask;
@@ -278,9 +282,9 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 		{//L298+IBT devices, enable is controlled in the power trip block.
 			
 #ifdef PIN_RAILCOM_SYNC_INPUT
-			gpio->enable_w1tc = sync_mask;   //pin_railcom as input
-			if ((gpio->in & sync_mask) != 0) { DCCpacket.pinSyncInputTriggered = true; }  //active hi?
-			gpio->enable_w1ts = sync_mask; //pin_railcom as output
+			//read input and revert pin_railcom to output
+			if ((READ_PERI_REG(&gpio->in) & sync_mask) != 0) { DCCpacket.pinSyncInputTriggered = true; }
+			gpio->enable_w1ts = sync_mask;
 
 			gpio->out_w1ts = dcc_mask | sync_mask;
 			gpio->out_w1tc = dcc_maskInverse ;
@@ -290,6 +294,7 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 #endif
 		
 //we exit DCC_CUTOUT_END with railcom blanking set, this does not change (PIN_RAILCOM_SYNC_) until start of next DCC_CUTOUT state
+//railcom blanking = disable the 6n137 opto isolator output
 		
 		}
 
@@ -495,27 +500,8 @@ void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase)
 
 
 
-//2024-4-29 rather than infering H-bridge type from brake_mask==0 we should have conditional compilation based on a defined H_BRIDGE_TYPE
-//the program logic should only have dcc signal and enable signal.  how these map to various pins is an issue to do with the defined bridge type
-//you could argue brake is equivalent to enable, but its behaviour is not.  Or maybe it is.
-//if you tie the LMD PWM pin high, then brake is equivalent to not-enable.  then there's one dcc pin (mapped to dir) and its in-phase
-
-
-//Yeah so I think we can simplify what I have just written...
-//Maybe not.  Enable is intended to remove track power (go open or short cct).  Railcom instead asserts a short.
-//so the RC cutout is not equivalent to not-enable, unless this is guaranteed to pull both rails to ground.  (i.e. open circuit is no good)
-//for the L298 and IBT taking not-enable will result in an open circuit.
-//Look at it another way.  there is no need to gate-enable if you have independent control of both sides of the H bridge.  This is true for the L298, LMD18200T and the IBT2.
-//BUT you also wish to avoid dc spikes at power up.  Most of these bridges achieve this by disabling the outputs.  You could do this with an RC delay.
-//but I have done this with careful selection of the drive pins.
-
-
-
-
 
 #pragma region RAILCOM
-
-
 
 /// <summary>
 /// Initialise UART for railcom, start listening for incoming data
@@ -561,6 +547,19 @@ void railcomInit() {
 /// Call once per program loop
 /// </summary>
 void railcomLoop(void) {
+
+
+	//DEBUG
+	if (DCCpacket.pinSyncInputTriggered) {
+		DCCpacket.pinSyncInputTriggered = false;
+		Serial.println("S");
+	}
+
+
+
+	//DEBUG
+
+
 
 #ifdef PIN_RAILCOM_SYNC_TOTEM
 #elif PIN_RAILCOM_SYNC_INPUT
