@@ -33,7 +33,7 @@
 		bool  trackPower;
 		bool  fastTickFlag;
 		bool  doCutout;
-		bool  pinSyncInputTriggered;  //if PIN_RAILCOM_SYNC_INPUT used, this flag goes high if the input was triggered (active low)
+		bool  pinSyncInputEvent;  //if PIN_RAILCOM_SYNC_INPUT used, this flag goes high if the input was triggered (active low)
 		uint8_t railcomPacketCount;  //used for railcom timeout
 	};
 
@@ -80,7 +80,7 @@
 	* D8 is driven low and is held low for the entire RC cutout except at the end, where it is breifly switched to a regular INPUT
 	* and is read.  It will read high if the pushbutton is active.  When D8 is active low, the pushbutton has no effect and cannot corrupt incoming serial.
 	* 
-	* pinSyncInputTriggered is a flag and is set if we saw active high input on PIN_RAILCOM_SYNC_INPUT at the end of the railcom cutout. This flag must be reset in software.
+	* pinSyncInputEvent is a flag and is set if we saw active high input on PIN_RAILCOM_SYNC_INPUT at the end of the railcom cutout. This flag must be reset in software.
 	* 
 	*/
 

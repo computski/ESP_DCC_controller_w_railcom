@@ -33,7 +33,7 @@ namespace nsJogWheel {
 		uint8_t	state;
 		bool	jogHiSpeed;  //set if user is rotating jog quickly
 		bool	jogLoSpeed; //set if user is rotating slowly enough to permit shoot-through on a direction change.
-		uint8_t jogSpeedTick;  //used to detect high rotation speed
+		uint8_t jogSpeedTick;  //used to detect high rotation speed	
 	};
 
 

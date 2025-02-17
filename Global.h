@@ -279,8 +279,8 @@ dcc_init(14,13,true);
 #define ANALOG_SCALING 3.9  //when using A and B in parallel  (2.36 to match multimeter RMS)
 
 //IDLE_SYNC is used to debug railcom only.  it puts a sync pulse on GPIO15
-#define PIN_RAILCOM_SYNC_INPUT	15  //D8 GPIO15, normally would use for ESTOP as an input
-#define nPIN_RAILCOM_SYNC_TOTEM 15
+#define nPIN_RAILCOM_SYNC_INPUT	15  //D8 GPIO15, normally would use for ESTOP as an input
+#define PIN_RAILCOM_SYNC_TOTEM 15
 
 #define	PIN_SCL		2 
 #define	PIN_SDA		0 
@@ -326,7 +326,7 @@ dcc_init(12,13,true);
 
 
 //set nTRACE to disable, TRACE to enable serial tracing.  Disable for production.
-#define TRACE   
+#define nTRACE   
 
 #ifndef TRACE
 	#define trace(traceCodeBlock) ;

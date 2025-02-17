@@ -54,10 +54,7 @@
 //found that NMI in DCClayer1 conflicts with the WSP826WebServer. 
 //Had to switch to regular ints.  There is no conflict with Websockets
 
-
-uint16_t secCount;
-bool    bLED;
-
+uint8_t secCount;
 
 void setup() {
 	Serial.begin(115200);
@@ -155,9 +152,9 @@ void loop() {
 
 		secCount++;
 		if (secCount >= 8) {
-			/*toggle heartbeat LED, every 2s*/
-			bLED = !bLED;
+			//measure 2 secs
 			secCount = 0;
+		
 		
 			//send power status out to web sockets
 #ifdef _DCCWEB_h

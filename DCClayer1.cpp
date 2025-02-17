@@ -29,7 +29,9 @@ an active totem drive to overcome this 2k2.
 
 If we want to use the pin as PIN_RAILCOM_SYNC_INPUT then we will need to have D8 drive a 2k2 base resistor into a NPN which will pull the Opto enable pin to ground.  We then drive
 D8 with inverse logic, i.e. it is high during the railcom blanking period, and low during the railcom cutout.  It become a WPD (12k) input at DCC_CUTOUT_END when it is read and
-DCCpacket.pinSyncInputTriggered is set if we see active hi.  The pushbutton must pull D8 to 3v3 via a 680R resistor.  This is because D8 is active low during the railcom cutout.
+DCCpacket.pinSyncInputTriggered is set if we see active hi, and must be cleared in some other processing routine.
+The pushbutton must pull D8 to 3v3 via a 680R resistor.  This is because D8 is active low during the railcom cutout.
+
 */
 
 
@@ -270,7 +272,7 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 			
 #ifdef PIN_RAILCOM_SYNC_INPUT
 			//read input, then switch pin_railcom to be an output and assert railcom blanking
-			if ((READ_PERI_REG(&gpio->in) & sync_mask) != 0) { DCCpacket.pinSyncInputTriggered = true; }
+			if ((READ_PERI_REG(&gpio->in) & sync_mask) != 0) { DCCpacket.pinSyncInputEvent = true; }
 			gpio->enable_w1ts = sync_mask; //pin_railcom as output
 			if (DCCpacket.trackPower) gpio->out_w1ts = enable_mask | sync_mask;	
 #else
@@ -283,7 +285,7 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 			
 #ifdef PIN_RAILCOM_SYNC_INPUT
 			//read input and revert pin_railcom to output
-			if ((READ_PERI_REG(&gpio->in) & sync_mask) != 0) { DCCpacket.pinSyncInputTriggered = true; }
+			if ((READ_PERI_REG(&gpio->in) & sync_mask) != 0) { DCCpacket.pinSyncInputEvent = true; }
 			gpio->enable_w1ts = sync_mask;
 
 			gpio->out_w1ts = dcc_mask | sync_mask;
@@ -547,18 +549,6 @@ void railcomInit() {
 /// Call once per program loop
 /// </summary>
 void railcomLoop(void) {
-
-
-	//DEBUG
-	if (DCCpacket.pinSyncInputTriggered) {
-		DCCpacket.pinSyncInputTriggered = false;
-		Serial.println("S");
-	}
-
-
-
-	//DEBUG
-
 
 
 #ifdef PIN_RAILCOM_SYNC_TOTEM

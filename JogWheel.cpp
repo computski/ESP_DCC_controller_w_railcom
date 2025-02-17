@@ -193,9 +193,9 @@ void nsJogWheel::jogWheelScan() {
 as a LED heartbeat indicator.  example is using GPIO15 on the WeMos board, which has on-board 10k pull down and no led on this pin*/
 
 	if (jogWheel.jogTick % 4 == 0) {
-		/*read button every 40mS. First capture existing output state*/
+		//read button every 40mS. First capture existing output state
 
-		/*read it, all jog rotation and button pushes are active high*/
+		//read it, all jog rotation and button pushes are active high
 		if (digitalRead(PIN_JOG_PUSH) == HIGH) {
 			jogWheel.jogButtonTimer += jogWheel.jogButtonTimer != 255 ? 1 : 0;
 			}
@@ -205,7 +205,7 @@ as a LED heartbeat indicator.  example is using GPIO15 on the WeMos board, which
 			jogWheel.jogHeld = false;
 			}
 
-		/*declare an event*/
+		//declare an event
 		if (jogWheel.jogButtonTimer == JOG_DEBOUNCE_PERIOD) {
 			jogWheel.jogButton = true;
 			jogWheel.jogButtonEvent = true;
@@ -214,6 +214,7 @@ as a LED heartbeat indicator.  example is using GPIO15 on the WeMos board, which
 			jogWheel.jogHeld = true;
 			jogWheel.jogButtonEvent = true;
 		}
+
 	}
 
 	jogWheel.jogSpeedTick += jogWheel.jogSpeedTick == 255 ? 0 : 1;

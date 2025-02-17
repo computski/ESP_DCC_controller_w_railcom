@@ -2713,25 +2713,26 @@ int8_t DCCcore(void) {
 		//2019-10-10 check jogwheel activity
 		if (jogWheel.jogEvent || jogWheel.jogButtonEvent) {
 			//jogwheel related changes to local machine state engine
-			switch (m_machineSE) {
-			case M_UNI_RUN:
-				m_generalTimer = 10;
-				//2020-07-05 for unithrottle we need to trigger a display refresh
 
-			//2020-06-14 allow jog to control loco during turnout mode and function mode
-			case M_TURNOUT:
+				switch (m_machineSE) {
+				case M_UNI_RUN:
+					m_generalTimer = 10;
+					//2020-07-05 for unithrottle we need to trigger a display refresh
+
+				//2020-06-14 allow jog to control loco during turnout mode and function mode
+				case M_TURNOUT:
 
 
-				r = setLocoFromJog(jogWheel);
+					r = setLocoFromJog(jogWheel);
 
-				//2020-05-03 flag a change for broadcasting, UI update to follow
-				if (r >= 0) {
-					loco[r].changeFlag = true;
-					//modifying a single loco that is in a WiThrottle consist is handled here
-					replicateAcrossConsist(r);
+					//2020-05-03 flag a change for broadcasting, UI update to follow
+					if (r >= 0) {
+						loco[r].changeFlag = true;
+						//modifying a single loco that is in a WiThrottle consist is handled here
+						replicateAcrossConsist(r);
+					}
 				}
-			}
-
+			
 		}
 
 		//2019-11-15 deal with jog button pushes. These apply the brake/not if pushed/not
