@@ -1,7 +1,6 @@
 
 
 // DCCcore.h
-//https://www.picotech.com/library/knowledge-bases/oscilloscopes/digital-command-control-dcc-protocol-decoding
 
 #ifndef _DCCCORE_h
 #define _DCCCORE_h
@@ -21,7 +20,6 @@
 
 
 /*version control and capture of some system defaults for new compilations*/
-/*note, code at present does not support logging onto a network as a station*/
 struct CONTROLLER
 {
 	long	softwareVersion = 20250214;  //yyyymmdd captured as an integer
@@ -115,7 +113,7 @@ struct TURNOUT
 	bool		changeFlag;
 };
 
-/*state for Program on Main*/
+/*states for Program on Main*/
 enum POMstate {
 	POM_BYTE,
 	POM_BYTE_WRITE,
@@ -141,7 +139,7 @@ struct POM {
 
 
 
-/*CV related for SERVICE MODE*/
+/*states related to SERVICE MODE*/
 enum cvSTATE
 {
 	CV_IDLE,
@@ -175,13 +173,10 @@ struct CV {
 	int8_t bitCount;
 };
 /*cvReg and cvData need to be 16 bit ints due to temporary values they hold from key entry*/
-/*2019-11-25 added bool verify, timer for verify pulse detect, also bit manip mode*/
-/*forget bit mode.  in fact there is no verify, lets just byte-read on 'A' key. */
-
 
 
 /*Accessories are handled as 11-bit addresses with a boolean for thrown/through status
- *this is consumed in the packet engine.  we don't give a pointer to turnout[] */
+ *this is consumed in the packet engine */
 struct ACCESSORY
 {
 	uint16_t    address = 0;
@@ -210,9 +205,6 @@ extern POWER power;
 extern CONTROLLER bootController;
 extern ACCESSORY accessory;
 extern dccSTATE dccSE;
-
-/*the above 3 structs are defined in this header, whereas KEYPAD and JOGWHEEL are declared elsewhere*/
-
 
 extern bool  quarterSecFlag; //public flag for use in main loop
 
@@ -246,21 +238,26 @@ static void changeDigit(char digitASCII, uint8_t digPos, uint16_t* target);
 static bool setServiceModefromKey(void);
 
 //display related
+
 static void updateTurnoutDisplay(void);
 static void updateServiceModeDisplay(void);
 static void updateUNIdisplay();
 
 //jogwheel related
+
 static int8_t setLocoFromJog(nsJogWheel::JOGWHEEL& j);
 
 //system or hardware
-static void ina219Mode(boolean Avg);
+
+static void ina219Mode(boolean AverageMode);
 static int8_t setLoco(LOCO* loc, int8_t speed, bool dir);
+static LOCO* getNextLoco(LOCO* loc);
+static void incrLocoHistory(LOCO* loc);
 
 int8_t findLoco(char* address, char* slotAddress, bool searchOnly = false);
 int8_t findTurnout(uint16_t turnoutAddress);
-static LOCO* getNextLoco(LOCO* loc);
-void incrLocoHistory(LOCO* loc);
+
+
 
 /*end list of functions */
 

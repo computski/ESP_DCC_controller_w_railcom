@@ -34,7 +34,6 @@ namespace nsWiThrottle {
 		int8_t locoSlot;
 		uint8_t	MTaction;
 		bool orientation;
-	//	uint8_t timeout;   //now done at client level
 		};
 
 	struct CLIENTMESSAGE
@@ -60,7 +59,7 @@ namespace nsWiThrottle {
 
 
 
-	/*local scope, hence declared static*/
+	/*local scope*/
 	static int8_t doThrottleCommand(void *data, AsyncClient *client);
 	static void sendToClient(char *data, AsyncClient *client);
 	static void sendToClient(std::string s, AsyncClient *client);

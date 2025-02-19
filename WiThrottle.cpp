@@ -4,11 +4,9 @@
 /*WiThrottle module
 Implements the JRMI WiThrottle protocol
 https://www.jmri.org/help/en/package/jmri/jmrit/withrottle/Protocol.shtml
-*/
 
-//Uses ESPasycTCP library. This is non blocking inbound and can support multiple ip-clients
+Uses ESPasycTCP library. This is non blocking inbound and can support multiple ip-clients
 
-/*
  Note ESPasyncTCP can be blocking on a single client if you wish to send a second message.  The fix employed
  here in sendToClient is to send all messages to any given client as one large block message via a message queue
 
@@ -930,9 +928,10 @@ void nsWiThrottle::broadcastLocoRoster(AsyncClient *client) {
 	//Note that *6 is from server to client. client needs to respond *+ or *- to activate/deactivate heartbeat monitoring
 	//2021-12-01 added PW80 to indicate webserver is on port 80
 	//2021-12-01 also added HTDCCESP as a server message to the client.  Steve Todd, the author of Engine Driver has
-	//kindly agreed to recognise this token in his app so that the Web menu item appears as DCC ESP
+	//kindly agreed to recognise this token in his app so that the Web menu item appears as DCC ESP Settings
 	char buff[30];
-	snprintf(buff, 29, "VN2.0\r\nPW80\r\n*%d\r\nDCCESP\r\n", WITHROTTLE_TIMEOUT);
+	snprintf(buff, 29, "VN2.0\r\nPW80\r\n*%d\r\nHTDCCESP\r\n", WITHROTTLE_TIMEOUT);
+
 	m.msg = buff;
 	
 	//example 2 entry roster list RL2]\[RGS 41}|{41}|{L]\[Test Loco}|{1234}|{L

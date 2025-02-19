@@ -458,8 +458,7 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 /// <param name="pin_dcc">GPIO pin to carry DCC signal</param>
 /// <param name="pin_enable">GPIO pin to enable power. Active high.</param>
 /// <param name="phase">phase of DCC signal</param>
-
-void IRAM_ATTR dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase)
+void dcc_init(uint32_t pin_dcc, uint32_t pin_enable, bool phase)
 {
 	//load with an IDLE packet
 	DCCpacket.data[0] = 0xFF;
@@ -634,7 +633,13 @@ void railcomRead(uint16_t address, bool useLongAddr, uint8_t reg) {
 	DCCpacket.railcomPacketCount = 80;
 }
 
-
+/// <summary>
+/// decode inbound data against the 4/8 decode table
+/// </summary>
+/// <param name="inByte">4/8 coded serial data inbound</param>
+/// <param name="dataOut">the decoded byte</param>
+/// <param name="ignoreControlChars">ignore ACK, NACK, BUSY and only return data values</param>
+/// <returns></returns>
 bool decodeRailcom(uint8_t inByte, uint8_t* dataOut, bool ignoreControlChars) {
 	for (int i = 0; i <= RC_BUSY; i++) {
 		if (inByte == railcomTable[i]) {
