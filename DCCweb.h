@@ -29,7 +29,7 @@ namespace nsDCCweb {
 	void loopWebServices(void);
 	void broadcastPower(void);
 	void broadcastSMreadResult(uint16_t cvReg, int16_t cvVal);
-	void broadcastPOMreadResult(uint16_t cvReg, int16_t cvVal, char addrType, uint16_t addr);
+	void broadcastPOMreadResult(uint16_t cvReg, int16_t cvVal, char addrType, uint16_t address);
 	void broadcastChanges(void);
 	void sendJson(JsonObject& out);   //needs to be visible to railcom routines
 	void sendJson(JsonDocument out);
@@ -37,10 +37,10 @@ namespace nsDCCweb {
 
 	static void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length);
 	static void DCCwebWS(JsonDocument doc);
-	static bool changeToTurnout(uint8_t slot, uint16_t addr, const char* name);
-	static bool changeToTurnout(uint8_t slot, const char* addr, const char* name);
+	static bool changeToTurnout(uint8_t slot, uint16_t address, const char* name);
+	static bool changeToTurnout(uint8_t slot, const char* address, const char* name);
 	static bool changeToSlot(uint8_t slot, uint16_t address, bool useLong, bool use128, const char* name);
-	static bool changeToSlot(uint8_t slot, const char* addr, bool useLong, bool use128, const char* name);
+	static bool changeToSlot(uint8_t slot, const char* address, bool useLong, bool use128, const char* name);
 	static void setPower(bool powerOn);
 }
 

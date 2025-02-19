@@ -626,7 +626,7 @@ void railcomLoop(void) {
 /// Reset railcom reader, and look for incoming data for locoIndex
 /// </summary>
 /// <param name="locoIndex"></param>
-void railcomRead(uint16_t addr, bool useLongAddr, uint8_t reg) {
+void railcomRead(uint16_t address, bool useLongAddr, uint8_t reg) {
 #ifdef DEBUG_RC
 	return;
 #endif 

@@ -514,15 +514,15 @@ void dccPacketEngine(void) {
 				addr 5-9 maps to a second.  so if we set CV 7 on  addr 1-4, since we send CDDD=0000 it applies to the
 				whole controller.  whereas it is possible that each turnout has a CV7, and these can be individually addressed
 				only its not done. the controller has one CV7 instance, and if you write 1-4 that single CV7 will be changed.*/
-				DCCpacket.data[0] = m_pom.addr & 0b00111111;
+				DCCpacket.data[0] = m_pom.address & 0b00111111;
 				DCCpacket.data[0] |= 0b10000000;
-				DCCpacket.data[1] = ~(m_pom.addr >> 1);
+				DCCpacket.data[1] = ~(m_pom.address >> 1);
 				DCCpacket.data[1] &= 0b01110000;
 				DCCpacket.data[1] |= 0b10000000;
 
-				DCCpacket.data[0] = (m_pom.addr >> 3) & 0b00111111;
+				DCCpacket.data[0] = (m_pom.address >> 3) & 0b00111111;
 				DCCpacket.data[0] |= 0b10000000;
-				DCCpacket.data[1] = ~(m_pom.addr >> 4);
+				DCCpacket.data[1] = ~(m_pom.address >> 4);
 				DCCpacket.data[1] &= 0b01110000;
 				DCCpacket.data[1] |= 0b10000000;
 
@@ -530,13 +530,13 @@ void dccPacketEngine(void) {
 			}
 			else if (m_pom.useLongAddr) {
 				/*long address format S9.2.1 para 60*/
-				DCCpacket.data[0] = m_pom.addr >> 8;
+				DCCpacket.data[0] = m_pom.address >> 8;
 				DCCpacket.data[0] |= 0b11000000;
-				DCCpacket.data[1] = m_pom.addr & 0x00FF;
+				DCCpacket.data[1] = m_pom.address & 0x00FF;
 				i = 2;
 			}
 			else {
-				DCCpacket.data[0] = (m_pom.addr & 0x7F);
+				DCCpacket.data[0] = (m_pom.address & 0x7F);
 				i = 1;
 			}
 
@@ -587,14 +587,14 @@ void dccPacketEngine(void) {
 			}
 			else if (m_pom.useLongAddr) {
 				/*long address format S9.2.1 para 60*/
-				DCCpacket.data[0] = m_pom.addr >> 8;
+				DCCpacket.data[0] = m_pom.address >> 8;
 				DCCpacket.data[0] |= 0b11000000;
-				DCCpacket.data[1] = m_pom.addr & 0x00FF;
+				DCCpacket.data[1] = m_pom.address & 0x00FF;
 				i = 2;
 
 			}
 			else {
-				DCCpacket.data[0] = (m_pom.addr & 0x7F);
+				DCCpacket.data[0] = (m_pom.address & 0x7F);
 				i = 1;
 			}
 			/*CV#1 is transmitted as zero*/
@@ -613,7 +613,65 @@ void dccPacketEngine(void) {
 			m_pom.state = m_pom.state== POM_BYTE_READ ? POM_BYTE : POM_BIT;
 			//revert to transmitting packets, i.e. this packet gets sent
 	
-			railcomRead(m_pom.addr, m_pom.useLongAddr, m_pom.cvReg);
+			//2025-02-17 bug fix; create the loco address in the roster if it does not exist.  This makes reading more reliable because more railcom cutouts 
+			//addressed to that loco will be sent
+			/*
+			char buff[8];
+			itoa(m_pom.addr, buff + 1, 10);
+			buff[0] = m_pom.useLongAddr ? 'L' : 'S';  //accessory will default to S and is not supported
+			
+			//bug fix pending. we need to test if address held in return index is zero or does not match our target address (i.e. is a bump address)
+			//in which case we are dealing with a non-existing loco in the loco array and will need to write to that slot and call putDCCsettings()
+
+			
+			if (findLoco(buff, NULL) != -2) {  //is this getting optimised away as we do nothing with the return value and rely on the side effect of findLoco?
+				//the function will never return -2, so line below always executes
+				railcomRead(m_pom.addr, m_pom.useLongAddr, m_pom.cvReg);
+
+				//bug, we don't seem to be adding the loco to the roster, why?
+
+				//do we really want to keep writing to eeprom?
+				bootController.isDirty = true;
+				bootController.flagLocoRoster = true;
+				dccPutSettings();
+				Serial.printf("twat\n");
+			}
+			*/
+			//rewrite
+			{//scope block start
+				char buffer[10];
+				char existing[10];
+				sprintf(buffer, "S%d", m_pom.address);
+				buffer[0] = m_tempLoco.useLongAddress ? 'L' : 'S';
+				int8_t theSlot = findLoco(buffer, existing);
+				//kick off the read process
+				railcomRead(m_pom.address, m_pom.useLongAddr, m_pom.cvReg);
+
+				//pick up a zero slot or bump one. POM read is only reliable if the loco is in the roster
+				if (theSlot == -1) break;
+				if (m_pom.useAccessoryAddr) break;  //not supported at this time
+				if ((strcmp(existing, buffer) == 0) && (loco[theSlot].address != 0)) {
+					//loco exists in roster, no further action
+					break;
+				}
+				else {
+					//add loco to roster
+					loco[theSlot].clear();
+					loco[theSlot].address = m_pom.address;
+					loco[theSlot].useLongAddress = m_pom.useLongAddr;
+					//loco[theSlot].speed = 0;
+					//loco[theSlot].speedStep = 0;
+					//loco[theSlot].use128 = true;
+					//memset(loco[theSlot].name, '\0', sizeof(loco[theSlot].name));
+					//write back to eeprom
+					bootController.isDirty = true;  //pending write
+					bootController.flagLocoRoster = true;
+					//2021-09-01 increment age
+					incrLocoHistory(&loco[theSlot]);
+
+				}
+
+			}//scope block end
 			break;
 
 		case POM_BIT_WRITE:
@@ -621,13 +679,13 @@ void dccPacketEngine(void) {
 			if (m_pom.useLongAddr) {
 				/*long address format S9.2.1 para 60
 				14bit address, so shift 8 means 6msbit are used*/
-				DCCpacket.data[0] = m_pom.addr >> 8;
+				DCCpacket.data[0] = m_pom.address >> 8;
 				DCCpacket.data[0] |= 0b11000000;
-				DCCpacket.data[1] = m_pom.addr & 0x00FF;
+				DCCpacket.data[1] = m_pom.address & 0x00FF;
 				i = 2;
 			}
 			else {
-				DCCpacket.data[0] = (m_pom.addr & 0x7F);
+				DCCpacket.data[0] = (m_pom.address & 0x7F);
 				i = 1;
 			}
 			/*CV#1 is transmitted as zero*/
@@ -858,7 +916,7 @@ void dccPacketEngine(void) {
 
 				//2019-12-02 not very elegant, but update display here else it won't happen
 				//unless we code as a timeout elsewhere
-				updateSMdisplay();
+				updateServiceModeDisplay();
 				//2020-12-23 call DCCweb to send a read result over the websocket
 #ifdef _DCCWEB_h
 				trace(Serial.printf("reg %d val %d\n\r", m_cv.cvReg, m_cv.cvData);)
@@ -1146,7 +1204,7 @@ int8_t findTurnout(uint16_t turnoutAddress) {
 /*2019-11-25 re-write to include bit mainpulation and cleaner value edits
 returns true if triggering a display update
 2020-12-21 it only supports byte write*/
-bool setSMfromKey(void) {
+bool setServiceModefromKey(void) {
 	uint8_t i;
 	if (keypad.keyHeld) { return false; }
 	if (keypad.keyASCII >= '0' && keypad.keyASCII <= '9') {
@@ -1351,7 +1409,7 @@ void setPOMfromKey(void) {
 
 		else
 		{
-			changeDigit(keypad.keyASCII, 12 - m_pom.digitPos, &m_pom.addr);
+			changeDigit(keypad.keyASCII, 12 - m_pom.digitPos, &m_pom.address);
 		}
 		m_pom.digitPos += m_pom.digitPos < 12 ? 1 : 0;
 
@@ -1383,7 +1441,7 @@ void setPOMfromKey(void) {
 		}
 		else
 		{
-			changeDigit(keypad.keyASCII, 11 - m_pom.digitPos, &m_pom.addr);
+			changeDigit(keypad.keyASCII, 11 - m_pom.digitPos, &m_pom.address);
 		}
 
 		m_pom.digitPos += m_pom.digitPos < 12 ? 1 : 0;
@@ -1392,13 +1450,13 @@ void setPOMfromKey(void) {
 	/*final limits checks on reg and address values*/
 	/*long address valid to 10239, short to 127. 0 is not valid*/
 	if (m_pom.useLongAddr) {
-		if (m_pom.addr > 10239) { m_pom.addr = 10239; }
+		if (m_pom.address > 10239) { m_pom.address = 10239; }
 	}
 	else
 	{
-		if (m_pom.addr > 127) { m_pom.addr = 127; }
+		if (m_pom.address > 127) { m_pom.address = 127; }
 	}
-	if (m_pom.addr == 0) { m_pom.addr = 1; }
+	if (m_pom.address == 0) { m_pom.address = 1; }
 	/*registers are displayed as +1 compared to the actual value.  e.g. reg 23 is location 22 in memory*/
 	if (m_pom.cvReg > 1024) { m_pom.cvReg = 1024; }
 	if (m_pom.cvReg == 0) { m_pom.cvReg = 1; }
@@ -1591,24 +1649,24 @@ void updatePOMdisplay() {
 		if (m_pom.useAccessoryAddr) {
 			//2020-06-17 added accessory POM support
 			if (m_pom.readSuccess) {
-				sprintf(buffer, "%04d-%03d  A%05d", m_pom.cvReg, m_pom.cvData, m_pom.addr);
+				sprintf(buffer, "%04d-%03d  A%05d", m_pom.cvReg, m_pom.cvData, m_pom.address);
 			}else{
-				sprintf(buffer, "%04d-???  A%05d", m_pom.cvReg, m_pom.addr);
+				sprintf(buffer, "%04d-???  A%05d", m_pom.cvReg, m_pom.address);
 			}
 		}
 		else if (m_pom.useLongAddr) {
 			//0000-000  L00000
 			if (m_pom.readSuccess){
-				sprintf(buffer, "%04d-%03d  L%05d", m_pom.cvReg, m_pom.cvData, m_pom.addr);
+				sprintf(buffer, "%04d-%03d  L%05d", m_pom.cvReg, m_pom.cvData, m_pom.address);
 			}else{
-			sprintf(buffer, "%04d-???  L%05d", m_pom.cvReg, m_pom.addr);
+			sprintf(buffer, "%04d-???  L%05d", m_pom.cvReg, m_pom.address);
 			}
 		}
 		else {
 			if (m_pom.readSuccess) {
-				sprintf(buffer, "%04d-%03d  S%05d", m_pom.cvReg, m_pom.cvData, m_pom.addr);
+				sprintf(buffer, "%04d-%03d  S%05d", m_pom.cvReg, m_pom.cvData, m_pom.address);
 			}else{
-				sprintf(buffer, "%04d-???  S%05d", m_pom.cvReg, m_pom.addr);
+				sprintf(buffer, "%04d-???  S%05d", m_pom.cvReg, m_pom.address);
 			}
 
 		}
@@ -1631,19 +1689,19 @@ void updatePOMdisplay() {
 	/*display binary 1234-b1-0 S12345*/
 		if (m_pom.useLongAddr) {
 			if (m_pom.readSuccess) {
-				sprintf(buffer, "%04d-b%d-%d L%05d", m_pom.cvReg, (m_pom.cvBit & 0b111), (m_pom.cvBit >> 7), m_pom.addr);
+				sprintf(buffer, "%04d-b%d-%d L%05d", m_pom.cvReg, (m_pom.cvBit & 0b111), (m_pom.cvBit >> 7), m_pom.address);
 			}
 			else {
-				sprintf(buffer, "%04d-b%d-? L%05d", m_pom.cvReg, (m_pom.cvBit & 0b111),  m_pom.addr);
+				sprintf(buffer, "%04d-b%d-? L%05d", m_pom.cvReg, (m_pom.cvBit & 0b111),  m_pom.address);
 			}
 			
 		}
 		else {
 			if (m_pom.readSuccess) {
-				sprintf(buffer, "%04d-b%d-%d S%05d", m_pom.cvReg, (m_pom.cvBit & 0b111), (m_pom.cvBit >> 7), m_pom.addr);
+				sprintf(buffer, "%04d-b%d-%d S%05d", m_pom.cvReg, (m_pom.cvBit & 0b111), (m_pom.cvBit >> 7), m_pom.address);
 			}
 			else {
-				sprintf(buffer, "%04d-b%d-? S%05d", m_pom.cvReg, (m_pom.cvBit & 0b111), m_pom.addr);
+				sprintf(buffer, "%04d-b%d-? S%05d", m_pom.cvReg, (m_pom.cvBit & 0b111), m_pom.address);
 			}
 			
 		}
@@ -1670,7 +1728,6 @@ void updatePOMdisplay() {
 }
 
 
-//2020-05-23 rewrite to use cstring
 void updatePowerDisplay() {
 	lcd.noBlink();
 	lcd.home();
@@ -1694,13 +1751,12 @@ void updatePowerDisplay() {
 }
 
 
-/*2020-07-01 update unithrottle display
+/*Update unithrottle Loco display
 LOC:10023 1234mA    TRIP      1234mA
 R:^128 012345678    R:^128 012345678
 
 short locos are denoted by i.e. only 3 chars and more spaces
 LOC:023   1234mA
-
 */
 void updateUNIdisplay() {
 	lcd.noBlink();
@@ -1796,8 +1852,8 @@ void updateUNIdisplay() {
 }
 
 
-/*turnout display will show _2 for first digit and 2_ for second */
-/*only supports first 8 turnouts on screen, irrespecive of MAX_TURNOUT*/
+/*turnout display will show _2 for first digit and 2_ for second
+only supports first 8 turnouts on screen, irrespecive of MAX_TURNOUT*/
 void updateTurnoutDisplay(void) {
 	uint8_t y = 2;
 	uint8_t i;
@@ -1881,8 +1937,8 @@ void updateTurnoutDisplay(void) {
 
 }//end
 
-//how do we arrange a call back to update after timeout?  possibly a call from .ino when it hits zero?
-void updateSMdisplay(void) {
+//update local hardware display when in Service Mode
+void updateServiceModeDisplay(void) {
 	lcd.home();
 	char buffer[20];
 	switch (m_cv.state) {
@@ -1920,12 +1976,13 @@ void updateSMdisplay(void) {
 #pragma endregion
 
 
-/*restores settings from EEPROM. If the software version has changed, we overwrite the eeprom with defaults.
- *we also need to clear certain values on boot. max EEPROM we can use is 4096
- 2021-11-22 bug fix, with 8 locos and 8 turnouts, EEPROM needs to be min 532 bytes.  Expanded it to 1024*/
+/// <summary>
+/// restores settings from EEPROM. If the software version has changed, we overwrite the eeprom with defaults.
+/// we also need to clear certain values on boot.max EEPROM we can use is 4096
+/// </summary>
 void dccGetSettings() {
 	CONTROLLER defaultController;  //grab defaults as per DCCcore.h
-	EEPROM.begin(1024);
+	EEPROM.begin(1024);  //allows for 8 locos and 8 turnouts (uses 532)
 	int eeAddr = 0;
 	EEPROM.get(eeAddr, bootController);
 	if (defaultController.softwareVersion != bootController.softwareVersion) {
@@ -2096,14 +2153,14 @@ void DCCcoreBoot() {
 
 }
 
-/*+++ CORE DCC ROUTINE, CALL FROM MAIN LOOP +++
- * will return -2 if no change made to any loco or turnout
- * will return 127 if eStop was pressed
- * will return 0-3 for the loco slot
- * turnoutslot will be indicated by 31-39 (offset 31)
-*/
 
-/*core machine processing, called from the INO loop*/
+/// <summary>
+/// core machine processing, called regularly the INO program loop
+/// </summary>
+/// <returns>-2 if no change made to any loco or turnout
+/// 127 if eStop was pressed
+/// 0-8 for the loco slot affected
+/// turnout slots indicated by 31-39 (offset 31) </returns>
 int8_t DCCcore(void) {
 
 	/*every 10mS as flagged from DCClayer1 as DCCpacket.msTickFlag, run keyscans and processing*/
@@ -2416,11 +2473,16 @@ int8_t DCCcore(void) {
 							//this is the case for a blank slot as -1 is the return value
 							//reset certain params
 							trace(Serial.println(F("checkAddress reset"));)
-								m_tempLoco.consistID = 0;
+							
+								//2025-02-19 use a function in the struct
+							m_tempLoco.clear();
+							/*
+							m_tempLoco.consistID = 0;
 							m_tempLoco.function = 0;
 							m_tempLoco.speed = 0;
 							m_tempLoco.speedStep = 0;
 							m_tempLoco.jog = false;
+							*/
 							memset(m_tempLoco.name, '\0', sizeof(m_tempLoco.name));
 						}
 				}
@@ -2646,7 +2708,7 @@ int8_t DCCcore(void) {
 				else {
 					/*2019-12-02 fix to problem with CV-verify. we kick off ACK monitor but then burn up
 					cycles with update cvDisplay.  so fix is have setCVfromKey return bool and only update if true*/
-					if (setSMfromKey()) updateSMdisplay();
+					if (setServiceModefromKey()) updateServiceModeDisplay();
 				}
 				break;
 
@@ -2657,7 +2719,7 @@ int8_t DCCcore(void) {
 					//cv control is entered whilst eStop active
 					m_machineSE = M_SERVICE;
 					m_stateLED = L_SERVICE;
-					updateSMdisplay();
+					updateServiceModeDisplay();
 					break;
 				}
 
@@ -2761,7 +2823,7 @@ int8_t DCCcore(void) {
 			//countdown cv timeout. repaint display as we hit zero
 			if (m_cv.timeout > 0) {
 				m_cv.timeout--;
-				if (m_cv.timeout == 0) { updateSMdisplay(); }
+				if (m_cv.timeout == 0) { updateServiceModeDisplay(); }
 			}
 			//countdown POM timeout. repaint display as we hit zero
 			if (m_pom.timeout > 0) {
@@ -2925,10 +2987,15 @@ int8_t DCCcore(void) {
 
 }//end function
 
-//sets INA current monitoring in average mode or trigger mode (for ACK pulse in service mode)
-void ina219Mode(boolean Avg) {
+
+
+/// <summary>
+/// sets INA current monitoring in average mode or trigger mode (for ACK pulse in service mode)
+/// </summary>
+/// <param name="AverageMode">false will search for ACK pulse in Service Mode</param>
+void ina219Mode(boolean AverageMode) {
 	uint16_t config;
-	if (Avg) {
+	if (AverageMode) {
 		//change ina config to support 32V 3.2A and 8ms averaging over 16 samples
 		config = INA219_CONFIG_BVOLTAGERANGE_32V |
 			INA219_CONFIG_GAIN_8_320MV | INA219_CONFIG_BADCRES_12BIT |
@@ -2970,13 +3037,12 @@ void ina219Mode(boolean Avg) {
 }
 
 
-
-
-/*update local machine display in response to JRMI instructions over JSON or WiThrottle
-or from the local hardware interface
-2020-05-03 will also clear the change flags and
-2020-05-18 will first transmit turnout-commands to line
-2021-01-27 will clear broadcast roster flags*/
+/// <summary>
+/// update local machine display in response to JRMI instructions over JSON or WiThrottle
+/// or from the local hardware interface
+/// will first transmit turnout - commands to line
+/// will also clear the change flags and will clear broadcast roster flags
+/// </summary>
 void updateLocalMachine(void) {
 
 	bool doUpdate = false;
@@ -3028,15 +3094,13 @@ void updateLocalMachine(void) {
 
 
 
-/*2019-10-10 modify speed of loco using the jogwheel*/
-/*2019-10-15 also want to apply brake if pushbutton is pressed*/
-/*2020-06-25 and reverse direction on stationary if jog button held*/
-/*2020-10-10 we now no longer have a 4-up display, so jogwheel is always associated with uni_loco.  Added shunter support*/
-
+/// <summary>
+/// modify speed of loco using the jogwheel, apply brake if pushbutton pressed
+/// reverse direction on stationary if jog button held
+/// </summary>
+/// <param name="j">jogwheel struct</param>
+/// <returns>index of loco the jogwheel is currently assigned to, -2 if Estop is blocking</returns>
 int8_t setLocoFromJog(nsJogWheel::JOGWHEEL& j) {
-	/*returns index of loco[] modified, or -2 if no changes made*/
-	/*which loco has the jog assigned?*/
-
 	uint8_t i;
 	for (i = 0; i < MAX_LOCO; i++) {
 		if (loco[i].jog) { break; }
@@ -3123,8 +3187,11 @@ int8_t setLocoFromJog(nsJogWheel::JOGWHEEL& j) {
 
 
 
-/*if a change is made to a loco, replicate this to other locos in the same consist.
-Consists can be created in WiThrottle, not in the local hardware interface*/
+/// <summary>
+/// If a change is made to a loco, replicate this to other locos in the same consist.
+/// Consists can be created in WiThrottle, not in the local hardware interface
+/// </summary>
+/// <param name="slot">index of target loco slot</param>
 void replicateAcrossConsist(int8_t slot) {
 	if (slot<0 || slot > MAX_LOCO) return;
 	if (loco[slot].consistID == 0) return;
@@ -3137,7 +3204,7 @@ void replicateAcrossConsist(int8_t slot) {
 			/*replicate speed*/
 	//DEBUG
 			trace(Serial.printf("consist %d replicate %d to %d", loco[i].consistID, slot, i);)
-				loco[i].speed = loco[slot].speed;
+			loco[i].speed = loco[slot].speed;
 			loco[i].changeFlag = true;
 			//calculate the speed-step value from the percentile value
 			if (loco[i].use128) {
@@ -3165,20 +3232,20 @@ void replicateAcrossConsist(int8_t slot) {
 
 
 /// <summary>
-/// Initiates a POM command to the track
+/// Initiates a POM command to the track, supports read and write
 /// </summary>
 /// <param name="addr">first char A accessory, L long, S short. Followed by the address numeric</param>
 /// <param name="cv">CV register to write to</param>
 /// <param name="val">first char B write byte, R read byte, S set bit, C clear bit. Followed by numeric</param>
 ///  <returns>false if command malformed, true if initiated</returns>
-bool writePOMcommand(const char* addr, uint16_t cv, const char* val) {
+bool writePOMcommand(const char* address, uint16_t cv, const char* val) {
 
-	if (addr == nullptr) return false;
+	if (address == nullptr) return false;
 	if (val == nullptr) return false;
 
-	m_pom.useLongAddr = addr[0] == 'L' ? true : false;
-	m_pom.addr = atoi(addr + 1);
-	if (m_pom.addr == 0) return false;
+	m_pom.useLongAddr = address[0] == 'L' ? true : false;
+	m_pom.address = atoi(address + 1);
+	if (m_pom.address == 0) return false;
 
 
 	if (cv == 0 || cv > 1024) return false;
@@ -3219,12 +3286,21 @@ bool writePOMcommand(const char* addr, uint16_t cv, const char* val) {
 
 
 
-/*set flags to enter/exit service mode. set cv and val to perform a DIRECT byte write
-or set bool to verify, routine returns false whilst read is pending, true when finished and
-result is in val or, if read fails val==nullptr*/
-bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool verify, bool enterSM, bool exitSM) {
+
+/// <summary>
+/// Enter/Exit service mode.  Set a cv register value and perform a DIRECT byte write.
+/// DCC specification does not support running a loco in service mode.
+/// </summary>
+/// <param name="cvReg">cv target register</param>
+/// <param name="cvVal">cv value to write</param>
+/// <param name="read">true to read a cv register</param>
+/// <param name="enterSM">establish service mode</param>
+/// <param name="exitSM">terminate service mode</param>
+/// <returns>true for writes. false for reads if a read is pending, true if read was initiated. Read result is provided
+/// asyncrhonously via a call to nsDCCweb and is controlled in the machine state engine</returns>
+bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM, bool exitSM) {
 	//2020-12-27 routine is initiate-only.  i.e. initiate a write, initiate a read.  in the case of read
-	//there is a call back to nsDCCweb
+	//there is a call back to nsDCCweb from the machine state engine
 
 	//note that the DCC spec does not expect to run a loco in service mode, all it supports is setting
 	//and reading of CVs.  If you can read a CV then reasonably you can assume the loco is wired 
@@ -3236,7 +3312,7 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool verify, bool enterS
 		//process an eStop on all locos
 		for (auto& loc : loco) {
 			//setLoco(&loc, -1, true);
-
+			
 		}
 		//this will take around 100mS to execute, we immediately go into service mode which will result in 
 		//idle being sent to line and a 250mA current limit which we might trip if several locos were running at
@@ -3261,7 +3337,7 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool verify, bool enterS
 
 
 
-	if (!verify) {
+	if (!read) {
 		//initiate Direct write
 
 		if (cvReg > 1024)return false;
@@ -3305,17 +3381,26 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool verify, bool enterS
 }
 
 
-//address is a string such as L123 or S3 holding the loco address
-//slotAddress is a pointer to the targetted loco[] slot
-//ignoreEmpty will not attempt to bump a slot
-//the routine is passive, it does not actually overwrite any slot
-//2021-2-4 merge and refactor from wiT
-int8_t findLoco(char* address, char* slotAddress, bool ignoreEmpty) {
+
+/// <summary>
+/// search for an existing address in the loco[] array slots.
+/// If searchOnly, the routine is passive and will return the matching slot or -1.
+/// If not searchOnly, the routine will take allocate to a blank slot if existing address not found
+/// and if slots are all full, it will bump the oldest non-consist slot.
+/// This function does not modify data in the loco[] array.
+/// </summary>
+/// <param name="address">string such as L123 or S3 holding the loco address</param>
+/// <param name="slotAddress">return value. Pass NULL if you do not want a return value</param>
+/// <param name="searchOnly">will not attempt to allocate or bump a slot</param>
+/// <returns>index of slot matching address or slot just allocated/bumped. returns -1 if operation failed.
+/// slotAddress will equal address if address exists in a slot or we just allocated that address to a slot. It will return the bumped address if we bumped an old slot.
+/// Test loco[returned index].address for zero to determine if we just allocated a blank slot.</returns>
+int8_t findLoco(char* address, char* slotAddress, bool searchOnly) {
 	bool useLong = (address[0] == 'L') ? true : false;
 	if (slotAddress != NULL) { memset(slotAddress, '\0', sizeof(slotAddress)); }
 	if (address == nullptr) return -1;
 
-
+	
 	int8_t i;
 	char buf[8];
 	trace(Serial.printf("findLoc addr=%s S/L=%d\n", address, useLong);)
@@ -3339,7 +3424,7 @@ int8_t findLoco(char* address, char* slotAddress, bool ignoreEmpty) {
 	}
 
 	//2021-01-08 if looking for a match only, then exit now, ignoring zero slots
-	if (ignoreEmpty) return -1;
+	if (searchOnly) return -1;
 	trace(Serial.println("fL2");)
 
 		//or take an empty slot
@@ -3349,6 +3434,7 @@ int8_t findLoco(char* address, char* slotAddress, bool ignoreEmpty) {
 				//otherwise, copy address to slotAddress
 				trace(Serial.println("#2");)
 					if (slotAddress != NULL) strcpy(slotAddress, address);
+				//2025-02-19 why don't we return S0 to denote a blank slot is to be allocated?
 				return i;
 			}
 		}
@@ -3381,8 +3467,12 @@ int8_t findLoco(char* address, char* slotAddress, bool ignoreEmpty) {
 	return bump;
 }
 
-//returns the next loco in the roster (given pointer to current one) or if there are none it will 
-//generate a default loco at address 3 and point to this
+
+/// <summary>
+/// Find the next loco in the roster given a pointer to the current one
+/// </summary>
+/// <param name="loc">pointer to current loco</param>
+/// <returns>next loco in the roster, or if there are no valid locos it will generate a default loco at address 3 and point to this</returns>
 LOCO* getNextLoco(LOCO* loc) {
 	//Note, *loc is a copy of the pointer, you cannot modify the pointer value (i.e. point at a new location)
 	//so rather than the complex **loc pointer to a pointer syntax, its easier to make it  return value
@@ -3420,8 +3510,10 @@ LOCO* getNextLoco(LOCO* loc) {
 }
 
 
-//increase the history of this loc in the loco[] array
-//2020-09-01
+/// <summary>
+/// Increase the history of target loco in the loco[] array
+/// </summary>
+/// <param name="loc">target loco</param>
 void incrLocoHistory(LOCO* loc) {
 	uint16_t age = 0;
 	for (auto h : loco) {
@@ -3449,10 +3541,10 @@ void railcomCallback(uint8_t result, bool success) {
 		addrType = m_pom.useLongAddr ? 'L' : addrType;
 
 		if (success){
-			nsDCCweb::broadcastPOMreadResult(m_pom.cvReg,result,addrType,m_pom.addr);
+			nsDCCweb::broadcastPOMreadResult(m_pom.cvReg,result,addrType,m_pom.address);
 		}
 		else {
-			nsDCCweb::broadcastPOMreadResult(m_pom.cvReg, -1, addrType, m_pom.addr);
+			nsDCCweb::broadcastPOMreadResult(m_pom.cvReg, -1, addrType, m_pom.address);
 		}
 
 	if (m_machineSE != M_POM) return;

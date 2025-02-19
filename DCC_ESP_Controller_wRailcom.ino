@@ -79,6 +79,9 @@ DCC_PINS
 #error "DCC_PINS or DC_PINS must be defined.  Neither is."
 #endif
 
+
+
+
 DCCcoreBoot();
 
 //restore settings from EEPROM

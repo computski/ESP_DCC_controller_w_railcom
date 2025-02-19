@@ -326,7 +326,7 @@ dcc_init(12,13,true);
 
 
 //set nTRACE to disable, TRACE to enable serial tracing.  Disable for production.
-#define nTRACE   
+#define TRACE   
 
 #ifndef TRACE
 	#define trace(traceCodeBlock) ;

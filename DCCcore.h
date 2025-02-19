@@ -90,6 +90,19 @@ struct LOCO
 	bool		directionFlag;  //indicates direction changed
 	uint8_t		consistID;
 	uint16_t	history;
+	//clear a slot ready for use
+	void clear(void) {
+		speed = 0;
+		speedStep = 0;
+		consistID = 0;
+		forward = true;
+		jog = false;
+		history = 0;
+		use128 = true;
+		function = 0;
+		shunterMode = 0;
+		memset(name, '\0', sizeof(name));
+	};
 };
 
 struct TURNOUT
@@ -113,7 +126,7 @@ enum POMstate {
 };
 
 struct POM {
-	uint16_t addr = 3;
+	uint16_t address = 3;
 	bool    useLongAddr;
 	bool	useAccessoryAddr;  //added 2020-06-17
 	bool	readSuccess =true;	//added 2024-12-02
@@ -213,7 +226,7 @@ void updateLocalMachine(void);
 void dccGetSettings();
 void replicateAcrossConsist(int8_t slot);
 void dccPutSettings();
-bool writePOMcommand(const char* addr, uint16_t cv, const char* val);
+bool writePOMcommand(const char* address, uint16_t cv, const char* val);
 bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool verify, bool enterSM, bool exitSM);
 float getVolt();  //debug
 void railcomCallback(uint8_t result, bool success);
@@ -230,11 +243,11 @@ static int8_t setTurnoutFromKey(KEYPAD& k);
 static int8_t setFunctionFromKey(KEYPAD& k);
 static void changeDigit(char digitASCII, uint8_t digPos, uint8_t* target);
 static void changeDigit(char digitASCII, uint8_t digPos, uint16_t* target);
-static bool setSMfromKey(void);
+static bool setServiceModefromKey(void);
 
 //display related
 static void updateTurnoutDisplay(void);
-static void updateSMdisplay(void);
+static void updateServiceModeDisplay(void);
 static void updateUNIdisplay();
 
 //jogwheel related
@@ -244,7 +257,7 @@ static int8_t setLocoFromJog(nsJogWheel::JOGWHEEL& j);
 static void ina219Mode(boolean Avg);
 static int8_t setLoco(LOCO* loc, int8_t speed, bool dir);
 
-int8_t findLoco(char* address, char* slotAddress, bool ignoreEmpty = false);
+int8_t findLoco(char* address, char* slotAddress, bool searchOnly = false);
 int8_t findTurnout(uint16_t turnoutAddress);
 static LOCO* getNextLoco(LOCO* loc);
 void incrLocoHistory(LOCO* loc);

@@ -829,13 +829,13 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 		//are received in sequence
 		//pom = { "type": "dccUI", "cmd": "pom", "action": "byte", "addr":"S3", "cvReg": 0, "cvVal": "B23" };
 		const char* action = doc["action"];
-		const char* addr = doc["addr"];
+		const char* address = doc["addr"];
 		uint16_t cv_reg = doc["cvReg"];
 		const char* cv_val = doc["cvVal"];
 
 
 		if (action == nullptr) return;
-		if (addr == nullptr) return;
+		if (address == nullptr) return;
 		if (cv_val == nullptr) return;
 
 		//the required action is evident in cv_val without need to look at root.action
@@ -845,7 +845,7 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 		out["type"] = "dccUI";
 		out["cmd"] = "pom";
 		out["action"] = "ok";
-		out["success"]= writePOMcommand(addr, cv_reg, cv_val);
+		out["success"]= writePOMcommand(address, cv_reg, cv_val);
 		sendJson(out);
 	}
 
@@ -935,9 +935,9 @@ bool nsDCCweb::changeToSlot(uint8_t slot, uint16_t address, bool useLong, bool u
 /// <param name="use128">use 128 speed steps</param>
 /// <param name="name">friendly name for loco</param>
 /// <returns>true if one or more the params is different to that in the nominated slot</returns>
-bool nsDCCweb::changeToSlot(uint8_t slot, const char* addr, bool useLong, bool use128, const char* name) {
+bool nsDCCweb::changeToSlot(uint8_t slot, const char* address, bool useLong, bool use128, const char* name) {
 
-	if (atoi(addr) != loco[slot].address) return true;
+	if (atoi(address) != loco[slot].address) return true;
 	if (loco[slot].useLongAddress != useLong)  return true;
 	if (loco[slot].use128 != use128)  return true;
 
@@ -961,8 +961,8 @@ bool nsDCCweb::changeToSlot(uint8_t slot, const char* addr, bool useLong, bool u
 /// <param name="addr">DCC address</param>
 /// <param name="name">friendly name</param>
 /// <returns>true if a params supplied indicate a change is necessary</returns>
-bool nsDCCweb::changeToTurnout(uint8_t slot, uint16_t addr, const char* name) {
-	if (addr != turnout[slot].address) return true;
+bool nsDCCweb::changeToTurnout(uint8_t slot, uint16_t address, const char* name) {
+	if (address != turnout[slot].address) return true;
 	//both name might be null
 	if (((name == nullptr) && (turnout[slot].name == nullptr))) return true;
 	//or one of them...
@@ -981,8 +981,8 @@ bool nsDCCweb::changeToTurnout(uint8_t slot, uint16_t addr, const char* name) {
 /// <param name="addr">DCC address</param>
 /// <param name="name">friendly name</param>
 /// <returns>true if a params supplied indicate a change is necessary</returns>
-bool nsDCCweb::changeToTurnout(uint8_t slot, const char* addr, const char* name) {
-	if (atoi(addr) != turnout[slot].address) return true;
+bool nsDCCweb::changeToTurnout(uint8_t slot, const char* address, const char* name) {
+	if (atoi(address) != turnout[slot].address) return true;
 	//both name might be null
 	if (((name == nullptr) && (turnout[slot].name == nullptr))) return true;
 	//or one of them...
@@ -1055,12 +1055,12 @@ void nsDCCweb::broadcastSMreadResult(uint16_t cvReg, int16_t cvVal) {
 /// <param name="cvVal">value read back, negative if fail</param>
 /// <param name="addrType">A|L|S</param>
 /// <param name="addr">loco or accessory address</param>
-void nsDCCweb::broadcastPOMreadResult(uint16_t cvReg, int16_t cvVal,char addrType,uint16_t addr) {
+void nsDCCweb::broadcastPOMreadResult(uint16_t cvReg, int16_t cvVal,char addrType,uint16_t address) {
 	//this routine is a callback from DCCcore
 	JsonDocument out;
 	char buffer[8];
 	char* ptr = buffer;
-	itoa(addr, ++ptr, 10);
+	itoa(address, ++ptr, 10);
 	buffer[0] = addrType;
 	
 	out["type"] = "dccUI";
