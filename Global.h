@@ -132,8 +132,8 @@ dcc_init(14, 2, false, false);
 #define	PIN_ESTOP	0	//D3
 
 #define DCC_PINS \
-dcc_init(12,2,true,false);\
-dcc_init(14,2,false,false);
+dcc_init(12,2,true);\
+dcc_init(14,2,false);
 
 //DCC pins are D5 (GPIO14) and D6 (GPIO12) in antiphase, enable-power pin is D4 (GPIO2) 
 //there is only one enable pin, so just use it on both calls to dccInit
@@ -352,6 +352,18 @@ the ESP will go slow, the blue light indicating I2C activity starts slow on/off 
 
 I think to exit cleanly you must close the web pages before you switch your wifi connection.  Remember that the web pages invoke a websocket connection and i suspect that
 the client dropping the WS connection might be the problem here.  if you shut the web page, the socket is closed correctly.
+
+I also added a heartbeat to the websocket which may help with hanging/slow sockets
+*/
+
+
+
+/*2025-03-20 rethink RAILCOM_SYNC
+* if its not defined, should we disable railcom cutout?
+* there is some merit to generating a cutout even if the controller is not able to read messages
+* this would be the default, howver if you are using the L298 shield, it will cause power outages (open cct) rather than
+* cutouts (short circuits).  either way there's no power avaialble to locos during these periods.  
+
 
 */
 #endif

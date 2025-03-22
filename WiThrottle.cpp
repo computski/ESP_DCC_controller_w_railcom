@@ -1,6 +1,3 @@
-//
-//
-
 /*WiThrottle module
 Implements the JRMI WiThrottle protocol
 https://www.jmri.org/help/en/package/jmri/jmrit/withrottle/Protocol.shtml
@@ -14,7 +11,7 @@ Uses ESPasycTCP library. This is non blocking inbound and can support multiple i
  messages compared to using char arrays.  vector.clear() will not clean up the memory that the pointers reference.
 
 
- Modue supports the following EngineDriver/WiThrottle features;
+ Module supports the following EngineDriver/WiThrottle features;
  loco roster
  turnout roster
  one or more locos (ad hoc consist) on an individual multithrottle (MT) ip-client
@@ -62,6 +59,10 @@ ESTOP after 6 seconds.  If he comes back, an hour later he can pick up driving t
 
 It is a feature of this system, that a loco under ED or WiThrottle control can also be controlled from the local hardware unit
 think of this as 'dual-control'.  the local hardware display will remain synchronised to the ED throttle.
+
+2025-03-18 fixed a bug in broadcastChanges, MT_NEWADD section.  We now send the function name list to the WiThrottle when
+it requests aquisition of a loco.  This causes the function button names to appear, previously they did not when we
+were selecting a loco from the server roster.
 */
 
 
@@ -369,7 +370,8 @@ static void handleNewClient(void* arg, AsyncClient* client) {
 	client->onTimeout(&handleTimeOut, NULL);
 }
 
-/*boot the WiThrottle system*/
+
+/* boot the WiThrottle system */
 void nsWiThrottle::startThrottle(void) {
 	Serial.printf("Throttle start port  %d\n", bootController.tcpPort);
 
@@ -986,6 +988,8 @@ void nsWiThrottle::broadcastLocoRoster(AsyncClient *client) {
 
 	m.msg.append("\r\n");
 	messages.push_back(m);
+
+
 }
 
 /*send current turnout roster to all clients*/
@@ -1073,7 +1077,7 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 	}
 
 	std::string m;
-	char buf[32];
+	char buf[128];  //2025-03-18 increase from 32 to 128 to handle the function names string
 	char myT[4];  //target throttle 
 
 	//loop for client; we build messages on a per-client basis
@@ -1142,6 +1146,17 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 					//send add instruction MT+addr<;>addr, this works whether adding from the roster or adding a DCC address direct
 					sprintf(buf, "M%s+%s<;>%s\r\n", myT, throttle.address, throttle.address);
 					m.append(buf);
+					//2025-03-18 append an array of function names.
+					//you need to escape \ in the string below as \\
+					//MTLaddr<;>]\[Headlight]\[Bell]\[Horn]\[
+					//we only support 16 functions, and can't store their names
+					//had to increase buf[] to 128
+					sprintf(buf, "M%sL%s<;>]\\[Headlight]\\[1]\\[2]\\[3]\\[4]\\[5]\\[6]\\[7]\\[8]\\[9]\\[10]\\[11]\\[12]\\[13]\\[14]\\[15]\\[\r\n", myT, throttle.address);
+					m.append(buf);
+					//it is not necessary to immediately send the function states using MTAaddr<;>F00		
+					//end 2025-03-17
+
+
 					//now send speed and dir
 					sprintf(buf, "M%sA%s<;>V%d\r\n", myT, throttle.address, uint8_t(126 * loco[throttle.locoSlot].speed));
 					//test for estop - yet to implement
@@ -1186,7 +1201,6 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 				if (isConsistent && loco[throttle.locoSlot].functionFlag) {
 					//for function, can shorten base to be MTA* instead of full loco address
 
-					/*2020-11-25 that may not work for single throttles.  may have to send the full loco addr. BUG*/
 					int8_t fState = 0;
 					for (int f = 0;f < 17;f++) {
 						//APPEND to msg
