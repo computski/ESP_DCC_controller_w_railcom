@@ -295,14 +295,17 @@ dcc_init(14,13,true);
 //Note: If using a LMD18200 /LMD18200 device set enableActiveDuring cutout to false
 //for all other types such as  L298 or IBT2 set this to true
 
-//this block for L298 and IBT2 devices
-#define DCC_PINS \
+//this block for L298 and IBT2 devices.  dcc,enable,phase
+//enable GPIO13, GPIO12 and 13 are dcc phases.
+#define nDCC_PINS \
 dcc_init(12,13,true);\
 dcc_init(14,13,false);
 
 //this block for LMD on 2-pin control.  no dcc_maskInverse is defined
-#define nDCC_PINS \
-dcc_init(12,13,true);
+//pwm GPIO13 (enable) , brake is GPIO12 , Dir is GPIO14 (dcc)
+#define DCC_PINS \
+dcc_init(14,13,true);
+
 
 
 
