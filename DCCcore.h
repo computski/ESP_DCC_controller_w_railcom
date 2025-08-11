@@ -22,7 +22,7 @@
 /*version control and capture of some system defaults for new compilations*/
 struct CONTROLLER
 {
-	long	softwareVersion = 20250320;  //yyyymmdd captured as an integer
+	long	softwareVersion = 20250812;  //yyyymmdd captured as an integer
 	uint16_t	currentLimit = 1000;
 	uint8_t	voltageLimit = 15;
 	char SSID[21] = "DCC_ESP";

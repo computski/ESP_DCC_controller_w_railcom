@@ -686,6 +686,7 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 			//slot is in use if speed is >0 or a WiThrottle has taken it
 			s["inUse"] = loc.speed > 0 ? true : (loc.consistID != 0);
 			s["name"] = loc.name;
+			s["jog"] = loc.jog;
 			slots.add(s);
 		}
 
@@ -696,6 +697,32 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 #ifdef _WITHROTTLE_h
 		nsWiThrottle::broadcastLocoRoster(nullptr);
 #endif
+
+	}
+
+
+	if (strcmp(cmd, "jog") == 0) {
+	//2025-08-11 set jogwheel to a new loco slot, provided its non zero
+		uint8_t j = doc["loco"];
+		uint8_t k = 0;
+		for (auto loc : loco) {
+			if (loc.jog) { break; }
+			k++;
+		}
+
+		if (j >= MAX_LOCO) { j = k; }
+		if (loco[j].address == 0) {	j = k;}
+		if (j!=k) {
+			loco[k].jog = false;
+			loco[j].jog = true;
+			updateLocalMachine();
+		}
+	
+		JsonDocument out;
+		out["type"] = "dccUI";
+		out["cmd"] = "jog";
+		out["loco"] = j;
+		sendJson(out);
 
 	}
 
