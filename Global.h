@@ -301,7 +301,7 @@ dcc_init(14,13,true);
 dcc_init(12,13,true);\
 dcc_init(14,13,false);
 
-//this block for LMD on 2-pin control.  no dcc_maskInverse is defined
+//this block for LMD18200 on 2-pin control.  no dcc_maskInverse is defined
 //pwm GPIO13 (enable) , brake is GPIO12 , Dir is GPIO14 (dcc)
 #define DCC_PINS \
 dcc_init(14,13,true);
