@@ -1,11 +1,15 @@
-﻿<html xmlns="http://www.w3.org/1999/xhtml">
+﻿<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+
 <head>
- <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8">
    
     <title>DCC ESP controller - loco roster</title>
+
     <!--2021-01-06-->
 
-       <style>
+    <style>
         .outer {
             border: solid;
             border-width: 1px;
@@ -28,7 +32,7 @@
         }
 
         .inUse {
-               background-color: lightgray;
+            background-color: lightgray;
         }
 
         .nominal {
@@ -36,7 +40,7 @@
         }
 
 
-        input[type=text] ,.address{
+        input[type=text], .address {
             font-size: 4vmin;
             width: 20vw;
             padding: 0px 0px;
@@ -44,17 +48,17 @@
             box-sizing: border-box;
         }
 
-          
+
         input[type=button] {
             width: 40vw;
             font-size: 4vmin;
         }
 
-           input[type=checkbox] {
-               transform: scale(2);
-           }
+        input[type=checkbox] {
+            transform: scale(2);
+        }
 
-         
+
         BODY {
             FONT-SIZE: 4vmin;
             FONT-FAMILY: Verdana, Arial, Helvetica, sans-serif
@@ -72,43 +76,53 @@
     <script type="text/javascript">
         const MAX_ROWS = 8;
 
-        var wsUri = "wss://echo.websocket.org/";
-        //var wsUri = "192.168.7.1:12080/";
-
+        //var wsUri = "https://echo.websocket.org/.ws";   //disable for production
+        var wsUri = "192.168.7.1:12080/";
+        //https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/readyState
 
         //define send-receive objects
-        var hardware = { "type": "dccUI", "cmd": "hardware", "SSID": "DCC_02", "IP": "192.168.7.1", "MAC":"return of the", "pwd": "", "wsPort": 12080, "wiPort": 12090, "action": "poll" };
+       
+        var hardware = { "type": "dccUI", "cmd": "hardware", "SSID": "DCC_02", "IP": "192.168.7.1", "MAC": "return of the", "pwd": "", "wsPort": 12080, "wiPort": 12090, "action": "poll" };
         //if action=fail this indicates the changes were not successful and the current settings are returned
-        //var roster = {
-          //  "type": "dccUI", "cmd": "roster", "locos": [{ "slot": 0, "address": 3, "useLong": false, "use128": true, "name": "", "inUse": false },
-          //  { "slot": 1, "address": 4, "useLong": false, "use128": true, "name": "ivor","inUse":true }] };
+         /*
+        var roster = {
+            "type": "dccUI", "cmd": "roster", "locos": [{ "slot": 0, "address": 3, "useLong": false, "use128": true, "name": "", "inUse": false },
+            { "slot": 1, "address": 4, "useLong": false, "use128": true, "name": "ivor", "inUse": true }]
+        };
         //long version of roster is for use with ws:echo for development
+        */
+        var roster = {"type": "dccUI", "cmd": "roster", "locos": [] };
+        var jog = { "type": "dccUI", "cmd": "jog", "loco": 0 };
 
-  	var roster = {"type": "dccUI", "cmd": "roster", "locos": [] };
 
-      //****** common routine
+        //****** common routine
         var attempts = 0;
 
         //We try twice to pull the ESP specific wsUri, if we fail
         //then we fall back to the default wsUri defined above.
+
         function boot() {
-            if (attempts > 10) { return; }
+            // if (attempts > 10) { return; }
             //var re = /echo/gm;
             //if (re.test(wsUri)) {
             attempts++;
-            if (attempts > 2) {
+
+            //what is status?
+
+
+            if (attempts > 1) {
                 //connect anyway to the default wsUri
                 initWebsocket();
             } else {
                 //try and pull the websocket addr from the server
                 httpGet("/hardware");
                 //and call self again to check we are done
-                setTimeout(function () { boot(); }, 3000);
+                // setTimeout(function () { boot(); }, 3000);
             }
-            //}
-
-
+            setTimeout(function () { boot(); }, 3000);
         }
+
+
 
 
         function httpGet(theUrl) {
@@ -142,33 +156,44 @@
             //calling syc requests on main thread is deprecated due to response lock-ups
             //in our case we need to know the response before we can initialise the websocket
             xmlhttp.send();
-
-            //now call boot again after 3 sec
-
         }
 
 
 
         function initWebsocket() {
-            if (console) { console.log("initWebsocket") };
-            //signal to boot timeout to stop
-            attempts = 10;
 
-            websocket = new WebSocket(wsUri);
-            websocket.onopen = function (evt) {
+            //can only test readyState once mysocket is instantiated
+            if (typeof mysocket != 'undefined') {
+                if (mysocket.readyState == 3) {
+                    //if socket has closed, re-open it
+                    //by falling into code block below
+                    if (console) console.log("re-init");
+                } else {
+                    //if open, opening, closing
+                    return;
+                }
+                
+            };
+
+
+            mysocket = new WebSocket(wsUri);
+            if (console) console.log("initWebsocket");
+
+            mysocket.onopen = function (evt) {
                 onOpen(evt)
             };
 
-            websocket.onclose = function (evt) {
+            mysocket.onclose = function (evt) {
                 onClose(evt)
             };
 
-            websocket.onmessage = function (evt) {
+            mysocket.onmessage = function (evt) {
                 onMessage(evt)
+
 
             };
 
-            websocket.onerror = function (evt) {
+            mysocket.onerror = function (evt) {
                 onError(evt)
             };
 
@@ -216,10 +241,10 @@
         function pollRoster() {
             var myJSON = JSON.stringify(roster);
             debug.innerHTML = myJSON;
-            websocket.send(myJSON);
+            mysocket.send(myJSON);
         }
 
-   
+
         function repaintUI() {
             try {
                 var myObj = JSON.parse(debug.innerHTML);
@@ -240,18 +265,18 @@
 
                     roster = myObj;
                     //now need to iterate and add table rows as required
-                   
+
                     //wipe the table.  ergh.  easier to have a hidden dummy row then copy this out
                     //https://stackoverflow.com/questions/18333427/how-to-insert-a-row-in-an-html-table-body-in-javascript
                     //https://stackoverflow.com/questions/3607291/javascript-and-getelementbyid-for-multiple-elements-with-the-same-id
                     var tbodyRef = document.getElementById('entries').getElementsByTagName('tbody')[0];
-                    //alert(tbodyRef.childNodes.length);    
+                    //alert(tbodyRef.childNodes.length);
 
                     //building a table is not worth the effort because you need to update it on subsequent dumps from the server
                     //and binding is different to building so easier to add say 20 rows in html and then collapse the ones we don't need
 
 
-                   // document.getElementById('a'+0).value =roster.locos[0].address;
+                    // document.getElementById('a'+0).value =roster.locos[0].address;
 
                     //bind table
                     var i = 0;
@@ -261,8 +286,9 @@
                         document.getElementById('ck0_' + i).checked = roster.locos[i].useLong;
                         document.getElementById('ck1_' + i).checked = roster.locos[i].use128;
                         document.getElementById('n' + i).value = roster.locos[i].name;
+                        document.getElementById('ck2_' + i).checked = roster.locos[i].jog;
                         var r = document.getElementById('r' + i);
-                        r.className = roster.locos[i].inUse? "inUse":"";
+                        r.className = roster.locos[i].inUse ? "inUse" : "";
 
                     }
 
@@ -274,8 +300,16 @@
                     }
 
                 }
+                if (myObj.cmd == "jog") {
 
-                
+                    jog = myObj;
+                    //
+                    for (i = 0; i < roster.locos.length; ++i) {
+                        document.getElementById('ck2_' + i).checked = false;
+                    }
+                    document.getElementById('ck2_' + jog.loco).checked = true;
+                }
+
             }
 
             //use myarray.push("{more pairs}"); to add to a json array
@@ -297,26 +331,44 @@
             //and deal with negative or decimal point numbers as addresses
 
             //unbind table
-             for (i = 0; i < roster.locos.length; ++i) {
-                 if (roster.locos[i].inUse) continue;
+            for (i = 0; i < roster.locos.length; ++i) {
+                if (roster.locos[i].inUse) continue;
 
-                 a = document.getElementById('a' + i).value
-                 if (isNaN(a)) continue;
-                 if (a % 1 != 0) continue;  //integer only
-                 if (a < 0) continue;
-                 if (a > 10239) a = 10239;
-                 roster.locos[i].address = a;
-                 
-                 if (a > 127) document.getElementById('ck0_' + i).checked = true;
+                a = document.getElementById('a' + i).value
+                if (isNaN(a)) continue;
+                if (a % 1 != 0) continue;  //integer only
+                if (a < 0) continue;
+                if (a > 10239) a = 10239;
+                roster.locos[i].address = a;
+
+                if (a > 127) document.getElementById('ck0_' + i).checked = true;
                 roster.locos[i].useLong = document.getElementById('ck0_' + i).checked;
                 roster.locos[i].use128 = document.getElementById('ck1_' + i).checked;
-                roster.locos[i].name= document.getElementById('n' + i).value;
-             }
+                roster.locos[i].name = document.getElementById('n' + i).value;
+                roster.locos[i].jog = document.getElementById('ck2_' + i).checked;
+            }
 
             if (console) { (console.log("sendRoster")) };
             var myJSON = JSON.stringify(roster);
             debug.innerHTML = myJSON;
-            websocket.send(myJSON);
+            mysocket.send(myJSON);
+        }
+
+
+        function setJog(x) {
+            //setting a new active jog will clear all the other jog checkboxes
+            //you cannot uncheck by clicking on it
+            for (i = 0; i < roster.locos.length; ++i) {
+                document.getElementById('ck2_' + i).checked = false;
+            }
+            x.checked = true;
+            jog.loco = x.id.replace("ck2_", "");
+
+            var myJSON = JSON.stringify(jog);
+            debug.innerHTML = myJSON;
+            if (console) console.log(myJSON);
+            mysocket.send(myJSON);
+
         }
 
     </script>
@@ -336,17 +388,17 @@
 
 
         <table id="entries" border="0" style="width:100%">
-            <thead> <tr><td>slot</td><td>address</td><td>Long</td><td>128</td><td>name</td></tr> </thead>
+            <thead> <tr><td>slot</td><td>address</td><td>Long</td><td>128</td><td>name</td><td>jog</td></tr> </thead>
             <tbody>
-                <tr id="r0"><td>0</td><td><input type="text" id="a0" /></td><td><input type="checkbox" id="ck0_0" /></td><td><input type="checkbox" id="ck1_0" /></td><td><input type="text" maxlength="8" id="n0" /></td></tr>
-                <tr id="r1"><td>1</td><td><input type="text" id="a1" /></td><td><input type="checkbox" id="ck0_1" /></td><td><input type="checkbox" id="ck1_1" /></td><td><input type="text" maxlength="8" id="n1" /></td></tr>
-                <tr id="r2"><td>2</td><td><input type="text" id="a2" /></td><td><input type="checkbox" id="ck0_2" /></td><td><input type="checkbox" id="ck1_2" /></td><td><input type="text" maxlength="8" id="n2" /></td></tr>
-                <tr id="r3"><td>3</td><td><input type="text" id="a3" /></td><td><input type="checkbox" id="ck0_3" /></td><td><input type="checkbox" id="ck1_3" /></td><td><input type="text" maxlength="8" id="n3" /></td></tr>
+                <tr id="r0"><td>0</td><td><input type="text" id="a0" /></td><td><input type="checkbox" id="ck0_0" /></td><td><input type="checkbox" id="ck1_0" /></td><td><input type="text" maxlength="8" id="n0" /></td><td><input type="checkbox" id="ck2_0" onclick="setJog(this)" /></td></tr>
+                <tr id="r1"><td>1</td><td><input type="text" id="a1" /></td><td><input type="checkbox" id="ck0_1" /></td><td><input type="checkbox" id="ck1_1" /></td><td><input type="text" maxlength="8" id="n1" /></td><td><input type="checkbox" id="ck2_1" onclick="setJog(this)" /></td></tr>
+                <tr id="r2"><td>2</td><td><input type="text" id="a2" /></td><td><input type="checkbox" id="ck0_2" /></td><td><input type="checkbox" id="ck1_2" /></td><td><input type="text" maxlength="8" id="n2" /></td><td><input type="checkbox" id="ck2_2" onclick="setJog(this)" /></td></tr>
+                <tr id="r3"><td>3</td><td><input type="text" id="a3" /></td><td><input type="checkbox" id="ck0_3" /></td><td><input type="checkbox" id="ck1_3" /></td><td><input type="text" maxlength="8" id="n3" /></td><td><input type="checkbox" id="ck2_3" onclick="setJog(this)" /></td></tr>
 
-                <tr id="r4"><td>4</td><td><input type="text" id="a4" /></td><td><input type="checkbox" id="ck0_4" /></td><td><input type="checkbox" id="ck1_4" /></td><td><input type="text" maxlength="8" id="n4" /></td></tr>
-                <tr id="r5"><td>5</td><td><input type="text" id="a5" /></td><td><input type="checkbox" id="ck0_5" /></td><td><input type="checkbox" id="ck1_5" /></td><td><input type="text" maxlength="8" id="n5" /></td></tr>
-                <tr id="r6"><td>6</td><td><input type="text" id="a6" /></td><td><input type="checkbox" id="ck0_6" /></td><td><input type="checkbox" id="ck1_6" /></td><td><input type="text" maxlength="8" id="n6" /></td></tr>
-                <tr id="r7"><td>7</td><td><input type="text" id="a7" /></td><td><input type="checkbox" id="ck0_7" /></td><td><input type="checkbox" id="ck1_7" /></td><td><input type="text" maxlength="8" id="n7" /></td></tr>
+                <tr id="r4"><td>4</td><td><input type="text" id="a4" /></td><td><input type="checkbox" id="ck0_4" /></td><td><input type="checkbox" id="ck1_4" /></td><td><input type="text" maxlength="8" id="n4" /></td><td><input type="checkbox" id="ck2_4" onclick="setJog(this)" /></td></tr>
+                <tr id="r5"><td>5</td><td><input type="text" id="a5" /></td><td><input type="checkbox" id="ck0_5" /></td><td><input type="checkbox" id="ck1_5" /></td><td><input type="text" maxlength="8" id="n5" /></td><td><input type="checkbox" id="ck2_5" onclick="setJog(this)" /></td></tr>
+                <tr id="r6"><td>6</td><td><input type="text" id="a6" /></td><td><input type="checkbox" id="ck0_6" /></td><td><input type="checkbox" id="ck1_6" /></td><td><input type="text" maxlength="8" id="n6" /></td><td><input type="checkbox" id="ck2_6" onclick="setJog(this)" /></td></tr>
+                <tr id="r7"><td>7</td><td><input type="text" id="a7" /></td><td><input type="checkbox" id="ck0_7" /></td><td><input type="checkbox" id="ck1_7" /></td><td><input type="text" maxlength="8" id="n7" /></td><td><input type="checkbox" id="ck2_7" onclick="setJog(this)" /></td></tr>
 
             </tbody>
 
@@ -357,10 +409,8 @@
         <input type="button" value="SAVE" onclick="sendRoster();" />
         <br /> <br />
         If a loco is in-use by a WiThrottle, you cannot change that slot. You must first stop and release the loco.<br />
-        To delete a loco, set its address to 0.
-
-
-        <br />
+        To delete a loco, set its address to 0.<br />
+        The jog column indicates which loco is also controlled by the jogwheel. <br />
         <br />
         <a href="turnout.htm">turnout roster</a><br /><br />
         <a href="index.htm">home</a><br /><br />
@@ -370,4 +420,4 @@
 
 
 </body>
-        </html >
+</html>
