@@ -118,7 +118,11 @@ void nsDCCEXprocessor::buildBroadcastQueue(bool clearQueue) {
 		return;
 	}
 
-	//build the queue
+	//build the queue.   We will build a detail dump of all turnouts and all locos if their rosterflag is set
+	//will also send out the power status
+
+	
+
 
 }
 
@@ -133,8 +137,9 @@ void nsDCCEXprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 	//but there is no need to use free
 	trace(Serial.printf("DCCEX %s \n", msg);)
 
-		std::vector<std::string> tokens;
-	char buf[25];
+	std::vector<std::string> tokens;
+	#define BUFSIZE 25
+	char buf[BUFSIZE];
 
 	char* tokenSplit = strtok(msg, " ");
 	while (tokenSplit != NULL) {
@@ -152,7 +157,6 @@ void nsDCCEXprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 	
 		if (it > tokens.begin()) {	
 				if ("<"==(std::string)(it-1)->data()) {
-					Serial.println("foo");
 					//prior token is a solo <, append this token to it and then delete
 					(it - 1)->append(it->data());
 					it = tokens.erase(it);
@@ -168,9 +172,10 @@ void nsDCCEXprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 	}
 	
 
-	//DCCEX is a messy protocol. The <J... commands need concatenation
-	//<J T> <JT> are equivalent as are <J T 44> <JT 44>, same for <JG> etc.
+	//DCCEX is a messy protocol. smh. The <J... commands need concatenation
+	//<J T> <JT> are equivalent as are <J T 44> <JT 44>, same for <JG> etc. 
 	//if we see <J then we must concatenate the second token into the first and delete the second
+	//NET OF ALL OF THIS we will have single token commands where there are no params.
 	if ((tokens[0] == "<J") && (tokens.size() > 1)) {
 		tokens[0].append(tokens[1]);
 		tokens.erase(tokens.begin() + 1);
@@ -178,12 +183,14 @@ void nsDCCEXprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 
 
 	//debug
+	trace (
 	Serial.printf("tokens %d\n", tokens.size());
 	//dump them
 	for (int i = 0; i < tokens.size(); i++) {
-		Serial.printf("%s %d\n", tokens[i].c_str(), atoi(tokens[i].c_str()));
+		Serial.printf("%s\n", tokens[i].c_str());
 	}
 	Serial.println("______");
+		)
 	//end debug
 
 
@@ -192,548 +199,432 @@ void nsDCCEXprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 		if (tokens[0] == "<s>") {
 			queueMessage("<iDCC - ESP / ESP8266 / No shield defined / 20251005>", client);
 			//list all turnouts <H turnout_add 1|0> where 1 is thrown
+			//DCCex indexes turnouts by a numeric handle, not the dcc address and not the slot and not a text name.
+			//my equivalence is to use .name as the ID but only if it is numeric
 			for (auto t : turnout) {
-				sprintf(buf, "<H %d %d>\r\n", t.address, t.thrown ? 1 : 0);
+				if (t.address == 0) continue;
+				uint16_t nameAsNumeric = atoi(t.name);
+				if (nameAsNumeric == 0) continue;  //skip any roster entries with text names
+				snprintf(buf,BUFSIZE, "<H %d %d>\r\n", nameAsNumeric, t.thrown ? 1 : 0);
 				queueMessage(buf, client);
 			}
 			//send power status for good measure
-			sprintf(buf, "<p%d>\r\n", power.trackPower ? 1 : 0);
+			snprintf(buf, BUFSIZE,"<p%d>\r\n", power.trackPower ? 1 : 0);
 			queueMessage(buf, client);
 			return;
 
 		}
+
 		if (tokens[0] == "<1>") { nsDCCEXprocessor::setPower(true);return; }
 		if (tokens[0] == "<0>") { nsDCCEXprocessor::setPower(false);return; }
 		if (tokens[0] == "<=>") { queueMessage("<= A MAIN 0>\r\n", client);return; }//list power district
 
 		if (tokens[0] == "<c>") {//<c "CurrentMAIN" current C "Milli" "0" max_ma "1" trip_ma>
 			queueMessage("<c CurrentMAIN ", client);
-			sprintf(buf, "%04d C ", power.bus_mA);  //only just enough space in buf
+			snprintf(buf, BUFSIZE,"%04d C ", power.bus_mA);  //only just enough space in buf
 			queueMessage(buf, client);
 			queueMessage("\"Milli\" \"0\" 4000 ", client);
-			sprintf(buf, "\"1\" %04d>\r\n", bootController.currentLimit);
+			snprintf(buf, BUFSIZE, "\"1\" %04d>\r\n", bootController.currentLimit);
 			queueMessage(buf, client);
 			return;
 		}
 
 		if (tokens[0] == "<@>") { //virtual LCD
 			queueMessage("<@ 0 0 \"DCC - ESP\">\r\n", client);
-			sprintf(buf, "<@ 0 1 \"%d\">\r\n", bootController.softwareVersion);
+			snprintf(buf, BUFSIZE, "<@ 0 1 \"%d\">\r\n", bootController.softwareVersion);
 			queueMessage(buf, client);
+			queueMessage("<@ 0 2 \"RAILCOM\">\r\n", client);
 			return;
 		}
 
 		if (tokens[0] == "<JI>") { //current in the track, mA
-			sprintf(buf, "<jI %04d>\r\n", power.bus_mA);
+			snprintf(buf, BUFSIZE,"<jI %04d>\r\n", power.bus_mA);
 			queueMessage(buf, client);
 			return;
 		}
 
 		if (tokens[0] == "<JG>") { //current trip threshold, mA
-			sprintf(buf, "<jG %04d>\r\n", bootController.currentLimit);
+			snprintf(buf, BUFSIZE,"<jG %04d>\r\n", bootController.currentLimit);
 			queueMessage(buf, client);
+			return;
+		}
+
+		if (tokens[0] == "<!>") {//emergency stop, signal this in a broadcast
+			for (auto& loc : loco) {
+				loc.speed = 0;
+				loc.speedStep = 0;
+				//note a non-zero eStopTimer lets the dcc packet engine know to transmit an estop message
+				loc.eStopTimer = LOCO_ESTOP_TIMEOUT;
+				//flag a change so this gets broadcast over all channels
+				loc.changeFlag = true;
+			}
 			return;
 		}
 
 		//unspported
 		if (tokens[0] == "<Z>") { queueMessage("<X>\r\n", client); return; }  //list output pins
 		if (tokens[0] == "<S>"){ queueMessage("<X>\r\n", client);return;}//list sensor pins
-		if (tokens[0] == "<!>") { queueMessage("<X>\r\n", client);return; } //emergency stop
+	
 	}//end single token
 
 	
 	//TURNOUT PROCESSING
-	if (tokens[0] == "<T>") { //list the turnouts and their states
-		for (auto t : turnout) {
-			sprintf(buf, "<H %d %d>\r\n", t.address, t.thrown ? 1 : 0);
-			queueMessage(buf, client);
-			return;
-		}
-	}
+	//DCCex does not support text names for turnouts, instead it has a numeric id handle which is a name of sorts as well as the DCC address
+	//my system supports a text name and an address.   What this means, is that DCCex can add/delete/command numeric "names" but it won't be able to
+	//add/delete/command any existing turnouts in the roster if they have non numeric names. 
+	
 
-	if (tokens[0] == "<JT") {  //<JT id> request details of a specific turnout address
-		uint16_t id = atoi(tokens[1].c_str());  //atoi will ignore trailing > 
-		bool turnoutNotFound = true;
+	
+
+	if (tokens[0] == "<T>") { //list the turnouts and their states over multiple rows <H id state>
+		//will only do this for turnouts with numeric .name
+		bool foundNoTurnouts = true;
+	
 		for (auto t : turnout) {
-			if (t.address == id) {
-				//found the turnout, report its details <jT id X|state | "desc">
-				sprintf(buf, "<jT %d %d \"%s\">\r\n", t.address, t.thrown ? 1 : 0, t.name);
-				queueMessage(buf, client);
-				turnoutNotFound = false;
-				break;
-			}
-		}
-		if (turnoutNotFound) {
-			sprintf(buf, "<jT %d X>\r\n", id);
+			trace(Serial.printf("T %s\r\n", t.name);)
+			uint16_t nameAsNumeric = atoi(t.name);
+			if (nameAsNumeric == 0) continue;
+			if (t.address == 0) continue;
+			snprintf(buf, BUFSIZE, "<H %d %d>\r\n", nameAsNumeric, t.thrown ? 1 : 0);
 			queueMessage(buf, client);
+			foundNoTurnouts = false;
+		}
+		if (foundNoTurnouts) {
+			queueMessage("<X>\r\n", client);
 		}
 		return;
 	}
-
-	if (tokens[0] == "<T") {  //<T id state> turnout command but we need to find tokens within the msg
-		//if turnout has not been seen before, it is added to the roster
-		uint8_t turnoutSlot;
-
-		if (tokens.size() != 3) return;
-
-		//turnout id, but must be in range 1-2047
-		uint16_t turnoutId = atoi(tokens[1].c_str());
-		if (turnoutId > 2047) return;
+	
+	if (tokens[0] == "<T") {  
+		//<T id state> command a turnout to move
+		//<T id> delete a turnout from rostr
+		//<T id DCC linear> adds a turnout
+		//<T id DCC add subAddr> adds a turnout
+		//<T id addr subAddr> adds a turnout, deprecated but Decoder Pro uses it. smh.
+		//DCCex requires a turnout to be added to the roster before any position commands can be sent to it
+				
+				
+		//turnout id, DCCex upper limit is int16
+		uint16_t turnoutId = atoi(tokens[1].c_str()); 
 		if (turnoutId == 0) return;
-		turnoutSlot = findTurnout(turnoutId);
+		//Beware that in 2-token messages tokens[1] contains a trailling >
+		//so restate the token
+		itoa(turnoutId, buf, 10);
+		tokens[1] = buf;
+				
 
+		TURNOUT* ptrTurnout = nullptr;
+		//iterate the actual turnout array, not a copy of it :-)
+		for (auto &t : turnout) {
+			if (t.address == 0) continue;
+			if (tokens[1] == t.name) {
+				ptrTurnout = &t;
+				break;
+			}
+		}
+
+		if (tokens.size() == 2) { //<T id> remove id from roster
+			if (ptrTurnout == nullptr) {
+				//no match on numeric id
+				queueMessage("<X>\r\n", client);
+				return;
+			}
+			//clear turnout slot if we found it
+			ptrTurnout->address = 0;
+			memset(ptrTurnout->name, '\0', sizeof(ptrTurnout->name));
+			ptrTurnout->selected = false;
+			bootController.flagTurnoutRoster = true;
+			queueMessage("<0>\r\n", client);
+			return;
+		}
+
+		//three versions of command to add a turnout
+		//<T id DCC linear> 
+		//<T id DCC add subAddr> 
+		//<T id addr subAddr> 
+	if ((tokens.size() == 4) || (tokens.size() == 5)) {
+		//convert all addresses to linear form
+
+		uint16_t turnoutAddress = 0;
+		
+		if (tokens[2] == "DCC") {
+			if (tokens.size() == 4) {
+				//<T id DCC linear> 
+				turnoutAddress = atoi(tokens[3].c_str());
+			}
+			else {
+				//<T id DCC add subAddr> 
+				turnoutAddress =4 * atoi(tokens[3].c_str());
+				turnoutAddress+= atoi(tokens[4].c_str());
+			}
+
+		}
+		else
+		{//<T id addr subAddr> 
+			turnoutAddress = 4 * atoi(tokens[2].c_str());
+			turnoutAddress += atoi(tokens[3].c_str());
+		}
+
+		//we don't validate the addr-sub limits, we just test the final turnout address for range
+		if (turnoutAddress > 2047) return;
+		if (turnoutAddress == 0) return;
+
+		if (ptrTurnout == nullptr) {
+			uint16_t turnoutSlot = findTurnout(turnoutAddress); //Find index slot of a given turnout address, or assign a new one
+			snprintf(turnout[turnoutSlot].name, sizeof(turnout[turnoutSlot].name), "%d", turnoutId);
+			trace(Serial.printf("T add %d\r\n", turnoutAddress);)
+
+		}
+		else {
+			//just update dcc address
+			ptrTurnout->address = turnoutAddress;
+			trace(Serial.printf("T update %d\r\n", turnoutAddress);)
+
+		}
+		return;
+
+		}//end add-turnout block
+
+
+
+	/*
+		if (tokens.size() == 4) {
+		//add a turnout <T id addr subaddr>
+		//if the id already exists, there is no need to recreate but we should overwrite the DCC address
+			
+			uint16_t turnoutAddress = atoi(tokens[2].c_str());
+			uint8_t subAddress = atoi(tokens[3].c_str());
+			if (turnoutAddress > 511) return;
+			if (subAddress > 3) return;
+			//recalculate as a linear address.
+			turnoutAddress *= 4;
+			turnoutAddress += subAddress;
+			turnoutAddress += subAddress;
+			if (turnoutAddress == 0) return;
+
+			if (ptrTurnout == nullptr) {
+				uint16_t turnoutSlot = findTurnout(turnoutAddress); //Find index slot of a given turnout address, or assign a new one
+				snprintf(turnout[turnoutSlot].name, 8, "%d", turnoutId);
+				trace(Serial.printf("T add %d\r\n", turnoutAddress);)
+
+			}
+			else {
+				//just update dcc address
+				ptrTurnout->address = turnoutAddress;
+				trace(Serial.printf("T update %d\r\n", turnoutAddress);)
+
+			}
+			return;
+
+		}
+		*/
+
+
+		//else, this is a position command
+		//trace(Serial.printf("T slot %d %s\r\n", turnoutSlot,tokens[2].c_str());)  //debug
+		if (ptrTurnout == nullptr) return;
+
+
+		//dealing with a turnout position command
 		switch ((tokens[2].c_str())[0])
 		{
 		case '1':
 		case 'T':
-			turnout[turnoutSlot].thrown = true;
-			turnout[turnoutSlot].changeFlag = true;
+			ptrTurnout->thrown = true;
+			ptrTurnout->changeFlag = true;
 			break;
 		case '0':
 		case 'C':
-			turnout[turnoutSlot].thrown = false;
-			turnout[turnoutSlot].changeFlag = true;
+			ptrTurnout->thrown = false;
+			ptrTurnout->changeFlag = true;
 			break;
 		default: //includes X for examine.
-			//fake a change flag to trigger a broadcast of this turnout state
-			turnout[turnoutSlot].changeFlag = true;
+			//The DCC specifies X will return <H id DCC address subaddress state> 
+			//whereas <T> or <s> will emit <H id linearAddress>
+			//what a nasty messy protocol. smh.  Also X is the only way to find out what DCC address is assigned to a turnout.
+			uint16_t addr = atoi(ptrTurnout->name);
+			uint8_t subAddr = addr % 4;
+			addr = addr >> 2;
+			
+			snprintf(buf, BUFSIZE,"<H %s DCC %d %d %d>\r\n", ptrTurnout->name, addr, subAddr , ptrTurnout->thrown ? 1 : 0);
+			queueMessage(buf, client);
+
 		}
-		//the response will be a broadcast to all clients
+		//the response will be a broadcast to all clients.
+		//if findTurnout() added to the roster, it will flag the roster for broadcast
+		trace(Serial.println("T pos");)
 		return;
 	}
 
+	if (tokens[0] == "<JT>") {//list the turnout roster in a single row. <jT 1 2 ...> 
+		//Why have this and <T>? smh.
+		//note, I will emit only numeric 'names' from the roster
+		std::string s;
+		s.append("<jT");
+		for (auto t : turnout) {
+			//only emit turnouts with numeric names
+			uint16_t nameAsNumeric = atoi(t.name);
+			if (nameAsNumeric == 0) continue;
+			if (t.address == 0) continue;
+			s.append(" ");
+			s.append(t.name);
+		}
+		s.append(">\r\n");
+		queueMessage(s, client);
+		return;
+	}
+
+	if (tokens[0] == "<JT") {  
+		//<JT id> request details of a specific turnout address
+		//DCCex does not support giving text names to turnouts, but it can return any existing text descriptor. smh.
+		//not that id does not have any stated bounds so lets support uint_16 as a 'name' aka id
+
+		if (tokens.size() < 2) {
+			//malformed request
+			queueMessage("<X>\r\n", client);
+			return;
+		}
+
+		uint16_t turnoutId = atoi(tokens[1].c_str());
+		if (turnoutId == 0)  {
+			//malformed request, we effectively use atoi to check if id is numeric
+			queueMessage("<X>\r\n", client);
+			return;
+		}
+
+		//In 2 token messages token[1] has a trailing > so rewrite it as numeric
+		itoa(turnoutId, buf, 10);
+		tokens[1] = buf;
+
+			//we need to find by its name in the roster but only if numeric, because DCCex supports only numeric "id"
+			//DCCex does support retrieving a text descriptor, but does not allow you to set one. smh.
+			//This means all turnouts defined from DCCex will have t.name matching their id.
+			
+				for (auto t : turnout) {
+					if (tokens[1] != t.name) continue;
+					//found the turnout, report its details <jT id X|state | "desc">
+					snprintf(buf, BUFSIZE, "<jT %s %d \"%s\">\r\n", t.name, t.thrown ? 1 : 0, t.name);
+					queueMessage(buf, client);
+					return;
+				}
+				//turnoutId zero or not found in roster
+				snprintf(buf, BUFSIZE,"<jT %d X>\r\n", turnoutId);
+				queueMessage(buf, client);
+				return;
+	
+	}
+
+
 	//LOCOMOTIVE PROCESSING
+	//https://www.jmri.org/help/en/html/apps/DecoderPro/Roster.shtml
+	//it appears JMRI does not try to maintain a roster on the controller and DCCex has no commands to add a loco to the roster
+	//it can read the loco roster with <JR> but cannot delete from it or add to it.
+	//In a regular JMRI system, the laptop is the server, ED can see the roster and pick up a loco from it and ED will then issue commands
+	//to the JMRI server (speed, dir etc) and the server is expected to on-instruct the controller - or at least that's why I assume.
+
+	//so we may have reached a dead end.  there's no way for JMRI to interrogate the loco roster on my controller, nor write to it.
+	//If you start WiThrottle server on the laptop, ED can connect to it and select a loco from the roster.  At that point, the throttle will
+	//issue commands which JMRI will map to <t 1 3 126 0> type commands (i.e. the 5 token deprecated type).  first digit is meaningless
+	//second is dcc address, then speed step and finally dir
+
+	//these throttle messages are seen by JMRI but are not sent out to the controller... so again, no way for it to see and respond
+	//to the ED translated-to-DCCex messages.
+
+
+
 	if (tokens[0] == "<R>") { //find loco address
 		//This is non trivial. We have to read CV29 and then determine if we need to read reg 1 or reg 17+18
 		//and so a state engine and timeout arrangement is required for this before a value can be returned
 		//we also have to put the system into Service Mode
-		queueMessage("<X>\r\n", client);
+		//I will not implement this because I don't think JMRI invokes it.
+
+		//debug, spoof a response.  DP does not seem to do anything with this information.
+		queueMessage("<r 72>\r\n", client);
 		return; } 
 
+	if (tokens[0] == "<JR>") { //request loco roster
+		//<jR [id1 id2 ...]>  note the protocol is inconsistent with <T> turnout listing per line. smh.
+		//there is always at least 1 loco in the roster (default loco 3)
+		std::string s;
+		s.append("<jR");
+
+		for (auto l : loco) {
+			if (l.address == 0) continue;
+			sprintf(buf, " %d", l.address);
+			s.append(buf);
+			
+		}
+		s.append(">\r\n");
+		queueMessage(s, client);
+		return;
+	}
+
+
 	if (tokens[0] == "<JR") {//<JR id> request details of specific loco entry
+		
 		if (tokens.size() == 2) {
 			uint16_t locoAddressToQuery = atoi(tokens[1].c_str());
 			if (locoAddressToQuery > 0) {
 				for (auto l : loco) {
 					if (l.address == locoAddressToQuery) {
-						//resposnse <jR id "desc" "funct1/funct2/funct3/...">
-						sprintf(buf, "<jR %d \"%s\" \"F0/F1/F2/F3/F4/F5/F6/F7/F8/F9/F10/F11/F12/F13/F14/F15\">\r\n", l.address, l.name);
-						break;
+						std::string s;
+						//response <jR id "desc" "funct1/funct2/funct3/...">
+						//buf has limited chars, so append to std string
+						snprintf(buf, BUFSIZE,"<jR %d \"%s\"", l.address, l.name);
+						s.append(buf);
+						s.append(" \"F0/F1/F2/F3/F4/F5/F6/F7/F8/F9/F10/F11/F12/F13/F14/F15\">\r\n");
+						queueMessage(s, client);
+						return;
 					}
 				}
-			}
-			else {
-				//bad operation id zero or not found or non numeric
-				sprintf(buf, "<jR %d \"\" \"\">\r\n", locoAddressToQuery);
+				//were given a numeric but its not in roster. Bad protocol design, as it might be a valid loco with no name and no functions. 
+				//nevertheless this is considered not-in-roster smh.
+				snprintf(buf, BUFSIZE,"<jR %d \"\" \"\">\r\n", locoAddressToQuery);
 				queueMessage(buf, client);
+				return;
 			}
 		}
+
+		//malformed request
+		queueMessage("<X>\r\n", client);
 		return;
 	}
 
-	/*JRMI decoder pro throttles.   If you open two throttles on the same loco e.g. #3 from the same laptop, they will be synchronised
-	for changes you make in the app, BUT they will not reflect any <t 1 2 3 4> responses you send back from the controller.  
-	i.e. they are shit.   This is why ED is so much better.   Its not possible to have them sync to other control inputs made on other
-	channels in the system such as the hardware unit, or ED.   For this reason, I am not inclined to support engine speed control.
 
-	IF we do try to implement.  First, if we see an inbound command we need to add the loco to the roster if its not already in there.
-	we then can set that speed as if this were a hardware interface, i.e. WiT will obey the speed, rather than us steal from WiT because 
-	DCCEX does not support a steal concept.  If we set the speed as 10 on the JavaThrottle, then increase it to 50 on WiT, then the
-	JavaThrottle becomes unsynchronised.  if the user moves it, then its commanded speed will override WiT.  i.e. you may see
-	a speed jump.  You also have the issue that if the WiT executed a stop or eStop, the JavaThrottle will still be at the last commanded
-	speed.
+	/*JMRI Decoder Pro throttles.  If you open two throttles on the same loco on the same laptop they will be synchronised 
+	for changes in the app, BUT they will not reflect any <t 1 2 3 4> responses from the controller.  i.e. they are a poor 
+	implmentation compared to Engine Driver.  DP also seems to keep sending function commands endlessly if you invoke one.
+	
+	DCCex protocol does not support a steal concept for throttles.
 
-	The blurb says hitting "set" will ask the commandstation to release that loco so it  can be soley controlled by the JavaThrottle.
-	That is incorrect re DCCEX.  no command is sent on "set". only <t..> commands once you move the throttle.
-
-	Also if you hit a function button, DP will continously send the function command, approx 2 a second.  you cannot stop this, only
-	close the throttle window.  Even releasing the loco does not stop the function commands.  i.e. its a bug.  don't use these throttles!
-
+	Given that DP and DCCex do a poor job of synchrnoising throttles across the system given we may have inputs from ED or the Hardware,
+	I will not implment any DCCex throttle commands.  My advice; use Engine Driver.
+	
+	The <- cab> command is ignored.  My system will continuously transmit locos in the roster.  You need to remove from roster to kill the DCC output.
 	*/
 
 
-
 	if (tokens[0] == "<t") {  //<t cab speed dir> and also <t cab> and also <t junk cap speed dir>
-		//these are speed commands to the cab, i.e. to a DCC address
-		//do we add a loco to the roster if we have not seen it commanded before?  I think yes
-		//but in my system, if all loco slots are in use and the locos moving, then no further locos can be commanded
-		//we bump stationary locos.  To bump a moving loco means you lose control of it (except eStop).
-
-		//ergh, nasty nasty protocol there is also <t junk cab speed dir> i.e. 4 params
-		//in the 4 param ver speed=0-127 or -1 for estop, dir is 1|0 and cab is dcc address 1-10024 or whatever upper limit is
-		//BUT there are complexities, because there's no concept of steal in DCCEX so all throttles just mirror each other for that given loco
-		//and for my system, we have to assign a loco to a slot, we cannot just accept a random address.
-		uint16_t locoAddress = 0;
-		int8_t speed;  //0-127 or -1 for estop
-		int8_t direction; //1 forward
-
-		switch (tokens.size()) {
-		case 2:
-			//<t cab> this is a request for system to broadcast current status of the loco
-			locoAddress = atoi(tokens[1].c_str());
-			for (auto& l : loco) {
-				if (l.address == locoAddress) {
-					//spoof a change, this will cause the loco status to be broadcast
-					l.changeFlag = true;
-					break;
-				}
-			}
-			return;
-
-		case 4: //<t cab speed dir>
-			locoAddress = atoi(tokens[1].c_str());
-			speed = atoi(tokens[2].c_str());
-			direction = atoi(tokens[3].c_str());
-			break;
-		case 5:
-			locoAddress = atoi(tokens[1].c_str());
-			speed = atoi(tokens[2].c_str());
-			direction = atoi(tokens[3].c_str());
-		}
-
-		Serial.printf("lemon %d\n", locoAddress);
-
-
-		if (locoAddress > 0){
-			//valid parse, action the commanded speed+dir
-			for (auto& l : loco) {
-				if (l.address == locoAddress) {
-					//is there a function to set speed?
-					
-					
-					
-					
-					l.changeFlag = true;
-					break;
-				}
-			}
-			//return;
-
-
-			//debug, just echo the command, I want to see if this causes the Java throttles to update
-			//NO it does not.
-			if (tokens.size() != 5) return;
-		std::string s = tokens[0];
-		s.append(" ");
-		s.append(tokens[1]);
-		s.append(" ");
-		s.append(tokens[2]);
-		s.append(" ");
-		s.append(tokens[3]);
-		s.append(" ");
-		s.append(tokens[4]);
-		queueMessage(s, client);
+		//not implmented, use Engine Driver for throttles.
+		queueMessage("<X>\r\n", client);
 		return;
-		}
-
-
-
 	}
+
+	if (tokens[0] == "<F") { //<F cab funct state>
+		//not implmented, use Engine Driver for throttles.
+		queueMessage("<X>\r\n", client);
+		return;
+	}
+
+	if (tokens[0] == "<f") {//deprecated
+		queueMessage("<X>\r\n", client);
+		return;
+	}
+
 
 
 		
 }//END FUNC
-
-
-
-
-
-/// <summary>
-/// DEPRECATED will process a single DCCEX token, i.e. <token here> 
-/// </summary>
-/// <param name="msg">the token</param>
-/// <param name="client">TCP client</param>
-void nsDCCEXprocessor::tokenProcessor(char* msg, AsyncClient* client,bool oldVersion) {
-	trace(Serial.printf("DCCEX %s \n", msg);)
-		char buf[20];
-
-
-	//single char commands wrapped in < >
-	char* p = strstr(msg, "<s>");
-	if (p) {
-		queueMessage("<iDCC - ESP / ESP32 / No shield at all G - devel - 202504182148Z>", client);
-		//list all turnouts <H turnout_add 1|0> where 1 is thrown
-		for (auto t : turnout) {
-			sprintf(buf, "<H %d %d>\r\n", t.address, t.thrown ? 1 : 0);
-			queueMessage(buf, client);
-		}
-		//send power status for good measure
-		sprintf(buf, "<p%d>\r\n", power.trackPower ? 1 : 0);
-		queueMessage(buf, client);
-		return;
-	}
-
-	p = strstr(msg, "<1>");  //power on
-	if (p) nsDCCEXprocessor::setPower(true);
-	
-	p = strstr(msg, "<0>");  //power off
-	if (p) nsDCCEXprocessor::setPower(false);
-		
-	p = strstr(msg, "<Z>"); //list output pins
-	if (p) 	queueMessage("<X>\r\n", client);
-	
-	p = strstr(msg, "<S>");  //list sensor pins
-	if (p) queueMessage("<X>\r\n", client);
-	
-	p = strstr(msg, "<=>");  //list power district
-	if (p) queueMessage("<= A MAIN 0>\r\n", client);
-	
-	p = strstr(msg, "<@>");  //virtual LCD
-	if (p) {
-		queueMessage("<@ 0 0 \"DCC - ESP\">\r\n", client);
-		sprintf(buf, "<@ 0 1 \"%d\">\r\n", bootController.softwareVersion);
-		queueMessage(buf, client);
-		//queueMessage("<@ 0 1 \"2025-09-22\">\r\n", client);
-	}
-
-	p = strstr(msg, "<!>");  //emergency stop all locos
-	if (p) {
-		queueMessage("<X>\r\n", client);  //to implement
-	}
-
-	p = strstr(msg, "<JI>"); //current in the track, mA
-	if (p) {
-		sprintf(buf, "<jI %04d>\r\n", power.bus_mA);
-		queueMessage(buf, client);
-	}
-
-	p = strstr(msg, "<JG>"); //current trip threshold, mA
-	if (p) {
-		sprintf(buf, "<jG %04d>\r\n", bootController.currentLimit);
-		queueMessage(buf, client);
-	}
-
-
-	//SERVICE MODE RELATED
-	p = strstr(msg, "<R>");  //read loco address, but how do we know if its short or long?
-	//you'd first have to read cv 29 then either cv1 or cv17/18
-	//and to read multiple values, you need a state engine because they are read asyncrhonously
-	//far more complex than reading a single CV and responding back
-
-	if (p) {
-		queueMessage("<X>\r\n", client);
-		return;	
-	}
-
-
-
-	p = strstr(msg, "<R ");  //read a CV
-		if (p) {
-		uint16_t cv_reg = atoi(msg + 3);  //atoi will ignore trailing > 
-		if ((cv_reg <1) || (cv_reg > 1024)) {
-			//bad cv
-			queueMessage("<X>\r\n", client);
-		}
-		//we need to put the system into service mode and request a CV read. How do we know when to come out of service mode?
-		//might need to cycle track power
-		if (!power.serviceMode){
-		writeServiceCommand(0, 0, false, true, false);
-		//wait 200mS before a read can be initiated
-		delayMicroseconds(2000);
-		}
-
-		writeServiceCommand(cv_reg, 0, true, false, false);
-		//the result comes back asynchronously
-		return;
-
-	}
-
-
-
-
-
-	//TURNOUT RELATED
-	p = strstr(msg, "<T>"); //list the turnouts and their states
-	if (p) {
-		//list all turnouts <H turnout_add 1|0> where 1 is thrown
-		for (auto t : turnout) {
-			sprintf(buf, "<H %d %d>\r\n", t.address, t.thrown ? 1 : 0);
-			queueMessage(buf, client);
-		}
-	}
-
-	p = strstr(msg, "<JT ");  //<JT id> request details of a specific turnout address
-	if (p) {
-		//expect numeric followed by >
-		uint16_t id = atoi(msg + 4);  //atoi will ignore trailing > 
-		bool turnoutNotFound = true;
-		for (auto t : turnout) {
-			if (t.address == id) {
-				//found the turnout, report its details <jT id X|state | "desc">
-				sprintf(buf, "<jT %d %d \"%s\">\r\n", t.address, t.thrown ? 1 : 0, t.name);
-				queueMessage(buf, client);
-				turnoutNotFound = false;
-				break;
-			}
-		}
-		if (turnoutNotFound) {
-			sprintf(buf, "<jT %d X>\r\n", id);
-			queueMessage(buf, client);
-
-		}
-	}
-
-	p = strstr(msg, "<T ");  //<T id state> turnout command but we need to find tokens within the msg
-	//if turnout has not been seen before, it is added to the roster
-	if (p) {
-		char* tokenSplit = strtok(msg, " ");
-		uint8_t tokenCount = 0;
-		uint8_t turnoutSlot;
-		while (tokenSplit != NULL)
-		{
-			if (tokenCount == 1) {
-				//turnout id, but must be in range 1-2047
-				uint16_t turnoutId = atoi(tokenSplit);
-				if (turnoutId > 2047) break;
-				if (turnoutId == 0) break;
-				turnoutSlot = findTurnout(turnoutId);
-			}
-			if (tokenCount == 2) {
-				switch (tokenSplit[0])
-				{
-				case '1':
-				case 'T':
-					turnout[turnoutSlot].thrown = true;
-					turnout[turnoutSlot].changeFlag = true;
-					break;
-				case '0':
-				case 'C':
-					turnout[turnoutSlot].thrown = false;
-					turnout[turnoutSlot].changeFlag = true;
-					break;
-				default: //includes X for examine.
-					//fake a change flag to trigger a broadcast of this turnout state
-					turnout[turnoutSlot].changeFlag = true;
-				}
-
-			}
-			tokenCount++;
-			tokenSplit = strtok(NULL, " ");
-		}
-		//if we broke out at token 1 because of a bad address, or we see fewer than 3 tokens 
-		//we had a bad request
-		if (tokenCount < 3) queueMessage("<X>\r\n", client);
-	}
-
-
-	//LOCOMOTIVE RELATED
-	//DCC EX cannot support long addresses with values under 127, these are deemed to be short addresses
-	//my own command station can support this, so its possible S32 and L32 both exist, but these DCC EX commands will just
-	//operate on the first instance of 32 that they find.  Also <JR> will return <jR 32 32>
-	p = strstr(msg, "<#>"); //how many loco slots are supported?
-	if (p) {
-		sprintf(buf, "<#%d>\r\n", MAX_LOCO);
-		queueMessage(buf, client);
-	}
-
-	p = strstr(msg, "<JR>");  //also <J R> request loco roster
-	//response <jR loco-addresses-separated-by-spaces>
-	//don't need to concatenate addresses into a single string, instead we can emit each via queueMessage
-	if (p) {
-		queueMessage("<jR ", client);
-		for (auto l : loco) {
-			if (l.address != 0) {
-				itoa(l.address, buf, 10);
-				queueMessage(buf, client);
-			}
-		}
-		queueMessage(">\r\n", client);
-	}
-
-
-	p = strstr(msg, "<JR ");  //<JR id> request details of specific loco entry
-	if (p) {
-		uint16_t locoAddressToQuery = atoi(msg + 4);
-		if (locoAddressToQuery > 0) {
-			for (auto l : loco) {
-				if (l.address == locoAddressToQuery) {
-					//resposnse <jR id "desc" "funct1/funct2/funct3/...">
-					sprintf(buf, "<jR %d \"%s\" \"F0/F1/F2/F3/F4/F5/F6/F7/F8/F9/F10/F11/F12/F13/F14/F15\">\r\n", l.address, l.name);
-					break;
-				}
-			}
-		}
-		else {
-			//bad operation id zero or not found or non numeric
-			sprintf(buf, "<jR %d \"\" \"\">\r\n", locoAddressToQuery);
-			queueMessage(buf, client);
-		}
-	}
-
-	p = strstr(msg, "<t ");  //<t cab speed dir> and also <t cab> and also <t junk cap speed dir>
-	//these are speed commands to the cab, i.e. to a DCC address
-	//do we add a loco to the roster if we have not seen it commanded before?  I think yes
-	//but in my system, if all loco slots are in use and the locos moving, then no further locos can be commanded
-	//we bump stationary locos.  To bump a moving loco means you lose control of it (except eStop).
-
-	//ergh, nasty nasty protocol there is also <t junk cab speed dir> i.e. 4 params
-	//in the 4 param ver speed=0-127 or -1 for estop, dir is 1|0 and cab is dcc address 1-10024 or whatever upper limit is
-	//BUT there are complexities, because there's no concept of steal in DCCEX so all throttles just mirror each other for that given loco
-	//and for my system, we have to assign a loco to a slot, we cannot just accept a random address.
-
-
-	//NOTE: maybe its better to pull every <incoming> line of data into a vector of strings containing all tokens
-	//and then parse through the vector.  this allows us to cope wth <J R xxx> as well as <JR xxx> and these daft multi optional
-	//length commands like <t 1-to-4 params>  but we will split at space so last token may contain param> or > on its own.
-	//e.g. <*> might appear as < * > as well
-
-
-	
-	if (p) {
-		uint16_t locoAddress;
-		int8_t speed;  //0-127 or -1 for estop
-		int8_t direction; //1 forward
-
-		
-		
-		bool parseSuccess = true;
-		char* tokenSplit = strtok(msg, " ");
-		char* args[4];  //received arguements, max 4. dynamically allocated
-		uint8_t tokenCount = 0;
-		while (tokenSplit != NULL){
-			args[tokenCount] = (char*)malloc(strlen(tokenSplit) + 1);
-			strcpy(args[tokenCount++], tokenSplit);
-			tokenSplit = strtok(NULL, " ");
-			if (tokenCount == 4)break;  //accept max 4 params
-		}
-		
-
-		//do stuff with args...
-		//<t cab> is just a status request
-		switch(tokenCount) {
-		case 2:
-
-			break;
-		case 5:
-			tokenCount = 5;
-		case 4:
-			//process 2nd token onward
-			tokenCount -= 3;
-
-			//sprintf(buf, "%s %s %s\r\n", args[tokenCount], args[tokenCount+1], args[tokenCount+2]);
-			Serial.printf("tt %s %s %s\n", args[tokenCount], args[tokenCount + 1], args[tokenCount + 2]);
-
-
-			break;
-		default:
-			//zero or excessive tokens
-			parseSuccess = false;
-		}
-
-
-
-
-	//free up dynamically allocated memory
-	for (int i = 0; i < 3; i++) {
-		free(args[i]);
-	}
-
-	if (!parseSuccess) queueMessage("<X>\r\n", client);  //bad
-
-
-	}
-}
-
 
 
 
