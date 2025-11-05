@@ -30,7 +30,8 @@
 
 
 
-
+#include "LocoNetprocessor.h"
+#include "DCCEXprocessor.h"
 #include <splash.h>
 #include <Adafruit_SSD1306.h> //added 2024-11-26 for latest adafruit INA support
 #include <Adafruit_NeoPixel.h> //added 2024-11-26 for latest adafruit INA support
@@ -80,12 +81,11 @@ DCC_PINS
 #endif
 
 
-
-
-DCCcoreBoot();
-
 //restore settings from EEPROM
 dccGetSettings();
+
+//2025-08-15 now boot
+DCCcoreBoot();
 
 nsJogWheel::jogInit();
 

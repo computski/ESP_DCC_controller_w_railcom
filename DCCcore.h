@@ -22,7 +22,7 @@
 /*version control and capture of some system defaults for new compilations*/
 struct CONTROLLER
 {
-	long	softwareVersion = 20250812;  //yyyymmdd captured as an integer
+	long	softwareVersion = 20251104;  //yyyymmdd captured as an integer
 	uint16_t	currentLimit = 1000;
 	uint8_t	voltageLimit = 15;
 	char SSID[21] = "DCC_ESP";
@@ -31,11 +31,12 @@ struct CONTROLLER
 	char STA_SSID[21] = "YOUR_SSID";  //SSID when running as a station on an external WiFi network  YOUR_SSID
 	char STA_pwd[21] = "";			//pwd for station
 	uint16_t wsPort = 12080;        //websocket port
-	uint16_t tcpPort = 12090;       //tcp port
+	uint16_t tcpPort = 2560;       //tcp port, was 12090
 	bool isDirty = false;  //will be true if EEPROM needs to be written
 	bool flagLocoRoster;
 	bool flagTurnoutRoster;
 	bool bootAsAP = false;
+	bool hasDSKY = false;
 };
 
 //note for testing
@@ -86,6 +87,7 @@ struct LOCO
 	bool		brake = false;  //apply brake (i.e. transmit half speedStep)
 	bool		jog = false;// is the jogWheel currently controlling this loco?
 	bool		directionFlag;  //indicates direction changed
+	uint8_t		LocoNetSTATUS1 = 3;  //LocoNet status flags
 	uint8_t		consistID;
 	uint16_t	history;
 	//clear a slot ready for use
@@ -219,7 +221,9 @@ void dccGetSettings();
 void replicateAcrossConsist(int8_t slot);
 void dccPutSettings();
 bool writePOMcommand(const char* address, uint16_t cv, const char* val);
-bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool verify, bool enterSM, bool exitSM);
+bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM, bool exitSM);
+
+
 float getVolt();  //debug
 void railcomCallback(uint8_t result, bool success);
 

@@ -1,6 +1,8 @@
 // WiThrottle.h
 //Implements the JRMI WiThrottle protocol over a TCP socket
 //https://www.jmri.org/help/en/package/jmri/jmrit/withrottle/Protocol.shtml
+//
+// 2025-10-01 added references to DCCEXprocessor and a method on CLIENT_T to test for client type
 
 #ifndef _WITHROTTLE_h
 #define _WITHROTTLE_h
@@ -22,6 +24,14 @@ namespace nsWiThrottle {
 		AsyncClient *client;
 		std::string HU;  //HU identifier from client
 		uint8_t timeout;
+		bool isDCCEX(void) {
+			return (HU == "EX");
+			//above is exact match, below is partial match
+			//return (HU.find("EX") != std::string::npos);
+		};
+		bool isLOCONET(void) {
+			return (HU == "LN");
+		}
 	};
 
 
@@ -44,6 +54,7 @@ namespace nsWiThrottle {
 
 		
 	
+	
 	/*function prototypes*/
 	void startThrottle(void);
 	void seedLoco(void);
@@ -59,18 +70,22 @@ namespace nsWiThrottle {
 
 
 
-	/*local scope*/
+	//local scope
 	static int8_t doThrottleCommand(void *data, AsyncClient *client);
 	static void sendToClient(char *data, AsyncClient *client);
 	static void sendToClient(std::string s, AsyncClient *client);
 	static void	queueMessage(std::string s, AsyncClient *client);
+	static void queueMessage(std::string s, char clientType);
 	static void setPower(bool powerOn);
 	static int8_t addReleaseThrottle(AsyncClient *client, char MT, char *address, bool doAdd);
 	static bool checkDoSteal(char *address, bool checkOnly, bool &isConsist);
 	static void setConsistID(THROTTLE *t);
 	static void checkClientID(AsyncClient *client);
-	
-	
 
 }
+
+
+
+
+
 #endif

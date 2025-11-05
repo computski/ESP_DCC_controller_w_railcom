@@ -105,7 +105,7 @@ void getHardware() {
 	doc["base"] = power.ackBase_mA;
 	doc["AD"] = power.ADresult;
 	doc["heap"] = ESP.getFreeHeap();
-
+	doc["DSKY"] = bootController.hasDSKY;
 	trace(serializeJson(doc, Serial);)
 
 
@@ -136,6 +136,7 @@ void getRoster() {
 		s["addr"] = loc.address;
 		s["useLong"] = loc.useLongAddress;
 		s["use128"] = loc.use128;
+		s["jog"] = loc.jog;
 		slots.add(s);
 		Serial.printf("slot %d \r\n", i);
 	}
@@ -167,6 +168,8 @@ void nsDCCweb::startWebServices() {
 
 
 	bool runAsSoftAP = true;
+	const char* hostname = "dcc_esp";
+	WiFi.setHostname(hostname);
 
 	//do we have a network to connect to?
 	if (!((bootController.STA_SSID == NULL) || (strcmp(bootController.STA_SSID, "YOUR_SSID") == 0))) {
@@ -674,6 +677,7 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 		JsonDocument out;
 		out["type"] = "dccUI";
 		out["cmd"] = "roster";
+		
 		JsonArray slots = out["locos"].to<JsonArray>();
 
 		i = 0;
@@ -702,7 +706,7 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 
 
 	if (strcmp(cmd, "jog") == 0) {
-	//2025-08-11 set jogwheel to a new loco slot, provided its non zero
+		// loco is the new target for the jogwheel
 		uint8_t j = doc["loco"];
 		uint8_t k = 0;
 		for (auto loc : loco) {
@@ -711,13 +715,12 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 		}
 
 		if (j >= MAX_LOCO) { j = k; }
-		if (loco[j].address == 0) {	j = k;}
-		if (j!=k) {
+		if (loco[j].address == 0) { j = k; }
+		if (j != k) {
 			loco[k].jog = false;
 			loco[j].jog = true;
-			updateLocalMachine();
 		}
-	
+
 		JsonDocument out;
 		out["type"] = "dccUI";
 		out["cmd"] = "jog";
@@ -928,6 +931,11 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 }
 
 
+
+
+
+
+
 /// <summary>
 /// Check parameters against a nominated loco slot
 /// </summary>
@@ -1062,7 +1070,7 @@ void nsDCCweb::setPower(bool powerOn) {
 /// send CV read result message from Service Mode
 /// </summary>
 /// <param name="cvReg">register read</param>
-/// <param name="cvVal">read value, negative if fail</param>
+/// <param name="cvVal">readback value, negative if fail</param>
 void nsDCCweb::broadcastSMreadResult(uint16_t cvReg, int16_t cvVal) {
 	JsonDocument out;
 	out["type"] = "dccUI";

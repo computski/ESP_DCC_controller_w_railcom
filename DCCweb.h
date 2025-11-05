@@ -33,8 +33,7 @@ namespace nsDCCweb {
 	void broadcastChanges(void);
 	void sendJson(JsonObject& out);   //needs to be visible to railcom routines
 	void sendJson(JsonDocument out);
-
-
+	
 	static void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length);
 	static void DCCwebWS(JsonDocument doc);
 	static bool changeToTurnout(uint8_t slot, uint16_t address, const char* name);

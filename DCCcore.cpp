@@ -8,6 +8,7 @@
 #include "DCCcore.h"
 #include "DCClayer1.h"
 #include "DCCweb.h"
+#include "DCCEXprocessor.h"
 
 
 #include <LiquidCrystal_I2C.h>   //Github mlinares1998/NewLiquidCrystal
@@ -615,29 +616,7 @@ void dccPacketEngine(void) {
 	
 			//2025-02-17 bug fix; create the loco address in the roster if it does not exist.  This makes reading more reliable because more railcom cutouts 
 			//addressed to that loco will be sent
-			/*
-			char buff[8];
-			itoa(m_pom.addr, buff + 1, 10);
-			buff[0] = m_pom.useLongAddr ? 'L' : 'S';  //accessory will default to S and is not supported
 			
-			//bug fix pending. we need to test if address held in return index is zero or does not match our target address (i.e. is a bump address)
-			//in which case we are dealing with a non-existing loco in the loco array and will need to write to that slot and call putDCCsettings()
-
-			
-			if (findLoco(buff, NULL) != -2) {  //is this getting optimised away as we do nothing with the return value and rely on the side effect of findLoco?
-				//the function will never return -2, so line below always executes
-				railcomRead(m_pom.addr, m_pom.useLongAddr, m_pom.cvReg);
-
-				//bug, we don't seem to be adding the loco to the roster, why?
-
-				//do we really want to keep writing to eeprom?
-				bootController.isDirty = true;
-				bootController.flagLocoRoster = true;
-				dccPutSettings();
-				Serial.printf("twat\n");
-			}
-			*/
-			//rewrite
 			{//scope block start
 				char buffer[10];
 				char existing[10];
@@ -918,12 +897,14 @@ void dccPacketEngine(void) {
 				//unless we code as a timeout elsewhere
 				updateServiceModeDisplay();
 				//2020-12-23 call DCCweb to send a read result over the websocket
-#ifdef _DCCWEB_h
 				trace(Serial.printf("reg %d val %d\n\r", m_cv.cvReg, m_cv.cvData);)
-					nsDCCweb::broadcastSMreadResult(m_cv.cvReg, m_cv.cvData);
-#endif
+				nsDCCweb::broadcastSMreadResult(m_cv.cvReg, m_cv.cvData);
+				
+				//2025-10-04 added DCCEX protocol support
+				nsDCCEXprocessor::broadcastSMreadResult(m_cv.cvReg, m_cv.cvData);
+				
 			}
-
+			
 
 		}
 
@@ -1142,7 +1123,11 @@ int8_t setTurnoutFromKey(KEYPAD& k) {
 
 
 
-/*Find matching turnout slot or assign a new one*/
+/// <summary>
+/// Find index slot of a given turnout address, or assign a new one
+/// </summary>
+/// <param name="turnoutAddress">DCC address of turnout</param>
+/// <returns>integer slot that exists, or the newly assigned one</returns>
 int8_t findTurnout(uint16_t turnoutAddress) {
 	/*find the age of oldest history, and capture the oldest slot.  clear any selected flag*/
 	/*slots with a zero address, i.e. blank, should be assigned first*/
@@ -1150,13 +1135,16 @@ int8_t findTurnout(uint16_t turnoutAddress) {
 	uint8_t oldestSlot = 0;
 	uint8_t i;
 	uint8_t r;
+	
 	/*clear all selected flags, find oldest slot*/
 	for (i = 0; i < MAX_TURNOUT; i++) {
-		if (turnout[i].history > age) { age = turnout[i].history; oldestSlot = i; }
 		turnout[i].selected = false;
+		if (turnout[i].history > age) { 
+			age = turnout[i].history; 
+			oldestSlot = i; }
 	}
 
-	/*scan addresses, is there a match to an existing slot?*/
+	//scan addresses, is there a match to an existing slot?
 	for (i = 0; i < MAX_TURNOUT; i++) {
 		if (turnout[i].address == turnoutAddress)
 		{
@@ -1165,11 +1153,13 @@ int8_t findTurnout(uint16_t turnoutAddress) {
 		}
 	}
 
-	/*if we fail to find an existing slot, first assign any zero slot*/
+	//if we fail to find an existing slot, assign first available zero slot
+	//2025-10-27 bug fix, .selected needed to be set
 	if (i == MAX_TURNOUT) {
 		for (i = 0; i < MAX_TURNOUT; i++) {
 			if (turnout[i].address == 0) {
 				turnout[i].address = turnoutAddress;
+				turnout[i].selected = true;   
 				//default name is the numeric address
 				snprintf(turnout[i].name, 8, "%d", turnout[i].address);
 				bootController.flagTurnoutRoster = true;
@@ -1178,7 +1168,7 @@ int8_t findTurnout(uint16_t turnoutAddress) {
 		}
 	}
 
-	/*else assign one based on history, effectively we bump an old slot*/
+	//else assign one based on history, effectively we bump an old slot
 	if (i == MAX_TURNOUT) {
 		turnout[oldestSlot].address = turnoutAddress;
 		turnout[oldestSlot].selected = true;
@@ -1188,13 +1178,12 @@ int8_t findTurnout(uint16_t turnoutAddress) {
 		snprintf(turnout[oldestSlot].name, 8, "%d", turnout[i].address);
 	}
 
-	/*at this point we always have a slot selected, increment history of all other items*/
+	//at this point we always have a slot selected, increment history of all other items
 	for (i = 0; i < MAX_TURNOUT; i++) {
-		if (!turnout[i].selected) { turnout[i].history++; }
+		if (!turnout[i].selected)
+			{turnout[i].history++; }
 		else
-		{
-			r = i;
-		}
+			{r = i;}
 	}
 	return r;
 }
@@ -1469,17 +1458,18 @@ void setPOMfromKey(void) {
 
 #pragma  endregion
 
-/*2020-07-02 abstract loco speed and direction as a function
-speed can be +/-1 or 0 for no change, dir will toggle dir
-returns the loco[] array index if successful or -1 otherwise. also
--1 if we are operating on a temp LOCO object
-2020-11-24 updates history value. using uint16 even with one change per second, it will be 18+ hours before
-this counter wraps
 
-2021-1-31 the eStop blocking condition is causing a bug. will force a -1 result and this
-in turn will mess up "B" when shifting between locos because the slot is not returned
-do we really need to return -1 if blocking?  where is this used (e.g. stop speed increments)
-*/
+/// <summary>
+/// abstract loco speed and direction as a function.
+/// updates history value. using uint16 even with one change per second, it will be 18+ hours before
+/// this counter wraps
+/// </summary>
+/// <param name="loc">loco object</param>
+/// <param name="speed">+1 or -1 or 0 for no change</param>
+/// <param name="dir">true will cause direction to toggle if loco is stationary</param>
+/// <returns>returns the loco[] array index if successful or -1 otherwise.
+/// Also -1 if we are operating with a temp LOCO object.
+/// </returns>
 int8_t setLoco(LOCO* loc, int8_t speed, bool dir) {
 	if (loc == nullptr) return -1;
 	trace(Serial.println(F("\nsetLoco\n"));)
@@ -2019,6 +2009,7 @@ void dccGetSettings() {
 		loc.forward = true;
 		loc.jog = false;
 		loc.history = 0;
+		loc.LocoNetSTATUS1 = 0b11;
 	}
 
 	for (auto& t : turnout) {
@@ -2110,6 +2101,21 @@ void DCCcoreBoot() {
 		Serial.println(F("No I2C devices found\n"));
 	else
 		Serial.println(F("I2C scan done\n"));
+	
+	//2025-08-15 if Device count is >1 then we have a DSKY present
+	if (nDevices > 1) {
+		bootController.hasDSKY = true;
+	}
+	else {
+		bootController.hasDSKY = false;
+		//also put all locos into shunter mode
+		for (auto& loc : loco) {
+			loc.shunterMode = true;
+		}
+	}
+
+	
+
 	/*end I2C scan */
 
 
@@ -2150,6 +2156,10 @@ void DCCcoreBoot() {
 	/*INA219 current sensor*/
 	ina219.begin();  // Initialize first board (default address 0x40)
 	ina219Mode(true); //modify ina config to do 8.5mS averaged samples
+
+
+	
+	
 
 }
 
@@ -3387,17 +3397,17 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM,
 /// If searchOnly, the routine is passive and will return the matching slot or -1.
 /// If not searchOnly, the routine will take allocate to a blank slot if existing address not found
 /// and if slots are all full, it will bump the oldest non-consist slot.
-/// This function does not modify data in the loco[] array.
+/// This function DOES NOT MODIFY data in the loco[] array.
 /// </summary>
-/// <param name="address">string such as L123 or S3 holding the loco address</param>
-/// <param name="slotAddress">return value. Pass NULL if you do not want a return value</param>
+/// <param name="address">string such as L123 or S3 holding the loco address we seek</param>
+/// <param name="existingAddress">returns address held in bumped slot, else a copy of address. Pass NULL if you do not want a return value</param>
 /// <param name="searchOnly">will not attempt to allocate or bump a slot</param>
 /// <returns>index of slot matching address or slot just allocated/bumped. returns -1 if operation failed.
 /// slotAddress will equal address if address exists in a slot or we just allocated that address to a slot. It will return the bumped address if we bumped an old slot.
 /// Test loco[returned index].address for zero to determine if we just allocated a blank slot.</returns>
-int8_t findLoco(char* address, char* slotAddress, bool searchOnly) {
+int8_t findLoco(char* address, char* existingAddress, bool searchOnly) {
 	bool useLong = (address[0] == 'L') ? true : false;
-	if (slotAddress != NULL) { memset(slotAddress, '\0', sizeof(slotAddress)); }
+	if (existingAddress != NULL) { memset(existingAddress, '\0', sizeof(existingAddress)); }
 	if (address == nullptr) return -1;
 
 	
@@ -3414,9 +3424,9 @@ int8_t findLoco(char* address, char* slotAddress, bool searchOnly) {
 	//match exactly on address and short/long
 	for (i = 0; i < MAX_LOCO; i++) {
 		if ((loco[i].address == atoi(buf)) && (loco[i].useLongAddress == useLong)) {
-			if (slotAddress != NULL) {
-				sprintf(slotAddress, "S%d", loco[i].address);
-				if (loco[i].useLongAddress) slotAddress[0] = 'L';
+			if (existingAddress != NULL) {
+				sprintf(existingAddress, "S%d", loco[i].address);
+				if (loco[i].useLongAddress) existingAddress[0] = 'L';
 				trace(Serial.println("fL1");)
 			}
 			return i;
@@ -3432,10 +3442,14 @@ int8_t findLoco(char* address, char* slotAddress, bool searchOnly) {
 			if (loco[i].address == 0) {
 				//2021-10-02 zero-slot bug fix. Don't attempt to write to slotAddress if it is null
 				//otherwise, copy address to slotAddress
-				trace(Serial.println("#2");)
-					if (slotAddress != NULL) strcpy(slotAddress, address);
+				trace(Serial.printf("fL2a %d\n",i);)
+					if (existingAddress != NULL) strcpy(existingAddress, address);
 				//2025-02-19 why don't we return S0 to denote a blank slot is to be allocated?
 				return i;
+
+
+				//2025-11-05 now i am confused.  why don't we actually write the address to this slot?
+
 			}
 		}
 
@@ -3458,9 +3472,9 @@ int8_t findLoco(char* address, char* slotAddress, bool searchOnly) {
 	/*return bump slot, or -1 if none available*/
 	if (bump >= 0) {
 		//pull existing slot address value
-		if (slotAddress != NULL) {
-			sprintf(slotAddress, "S%d", loco[bump].address);
-			if (loco[bump].useLongAddress) slotAddress[0] = 'L';
+		if (existingAddress != NULL) {
+			sprintf(existingAddress, "S%d", loco[bump].address);
+			if (loco[bump].useLongAddress) existingAddress[0] = 'L';
 		}
 	}
 

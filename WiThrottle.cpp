@@ -35,7 +35,8 @@ time-out auto-stop if a throttle connection is lost (dead client, dropped Wifi).
  the behaviour of these apps can vary a little as the underlying OS plays a part.  e.g. the S3 does not always connect
  to the server on the first attempt.   WiThrottle lite on IOS does not appear to highlight/lowlight function buttons
  when they are active/deactive.
-  */
+
+ */
 
 
 /*
@@ -61,8 +62,11 @@ It is a feature of this system, that a loco under ED or WiThrottle control can a
 think of this as 'dual-control'.  the local hardware display will remain synchronised to the ED throttle.
 
 2025-03-18 fixed a bug in broadcastChanges, MT_NEWADD section.  We now send the function name list to the WiThrottle when
-it requests aquisition of a loco.  This causes the function button names to appear, previously they did not when we
-were selecting a loco from the server roster.
+it requests aquisition of a loco.  This causes the function button names to appear in EngineDriver, previously they did not
+when user selected a loco from the server roster.
+
+2025-10-01 added support for DCCEX message processing by calling out to a separate module
+you can find all references as they are prefixed by nsDCCEXprocessor
 */
 
 
@@ -74,10 +78,12 @@ were selecting a loco from the server roster.
 #include <ESP8266WiFi.h>
 #include <ESPAsyncTCP.h>
 #include <vector>
+#include "DCCEXprocessor.h"
+#include "LocoNetprocessor.h"
 
 using namespace nsWiThrottle;
 
-/*action states for MTaction*/
+//action states for MTaction
 enum MTACTION {
 	MT_NORMAL,
 	MT_NEWADD,
@@ -86,7 +92,7 @@ enum MTACTION {
 	MT_GARBAGE
 };
 
-/*use a vector to hold associations between loco slots and MT / clients*/
+//use a vector to hold associations between loco slots and MT / clients
 static std::vector<THROTTLE> throttles;
 
 static std::vector<CLIENTMESSAGE> messages;
@@ -98,13 +104,13 @@ static std::vector<CLIENT_T> clients;
 
 #pragma region Test_and_debug
 
-/*for testing this module in isolation, not used in production code*/
+//for testing this module in isolation, not used in production code
 void   nsWiThrottle::seedLoco(void) {
 	for (int8_t i = 0;i < MAX_LOCO;++i) {
 		loco[i].address = 3 + i;
 	}
 	
-	/*do same for turnouts*/
+	//do same for turnouts
 	
 	char buffer[9];
 	for (int8_t i = 0;i < MAX_TURNOUT;++i) {
@@ -113,6 +119,8 @@ void   nsWiThrottle::seedLoco(void) {
 		strcpy(turnout[i].name, buffer);
 		turnout[i].thrown = false;
 	}
+
+	
 }
 
 /*dump the loco array*/
@@ -153,25 +161,24 @@ void nsWiThrottle::sendWiMinimal(AsyncClient* client) {
 #pragma region TCP_client_related
 
 
-
- /* client events */
 static void handleError(void* arg, AsyncClient* client, int8_t error) {
 	Serial.printf("\n connection error %s from client %s \n", client->errorToString(error), client->remoteIP().toString().c_str());
 }
-
 
 //inbound data from client
 static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 	//2021-01-30 timeout handling. If we see any message from a client, reset its timeout
 	//2021-02-03 keep seeing timeouts. Make timeout double the period that the client was instructed to respond on. 
 	//2021-09-09 if you have say MAX_LOCO=8 the buffer may not be big enough to capture all incoming data from loco.htm
-		for (auto &c : clients) {
+	//2025-09-27 if the client is DCCEX, this is recognised via <*> in the data and from that point a different handler is assigned	
+	//2025-10-22 if client is LOCONET, this is recognised via SEND in the data and from that point a different handler is assigned
+
+	for (auto &c : clients) {
 			if (c.client == client) {
 				//reset the client timeout, timeout is set in seconds, but the timebase is 250mS
 				//add 100% margin because ED does not reliably send commands or heartbeat with the 
 				//timeout period
 				c.timeout = 2 *(4 * WITHROTTLE_TIMEOUT);
-
 			}
 		}
 
@@ -189,7 +196,6 @@ static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 	char *msg;
 	//assume 512 is large enough for anticipated data
 	char buffer[512];
-	int cnt = 0;
 	memset(buffer, '\0', sizeof(buffer));
 	if (len > 511) len = 511;
 
@@ -332,9 +338,42 @@ static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 		nsWiThrottle::doThrottleCommand(msg, client);
 	}
 	
+	//2025-10-22 LOCONET support, any message where SEND is seen is a LOCONET message
+	p = strstr(msg, "SEND");
+	if (p) {
+		for (auto& c : clients) {
+			if (c.client == client) {
+				c.HU = "LN";
+				//re-assign handler to loconet
+				client->onData(&nsLOCONETprocessor::handleLocoNet, NULL);
+				nsLOCONETprocessor::tokenProcessor(msg, client);
+				return;
+			}
+		
+		}
+	}
+
+
+	//2025-10-01 DCCEX support, any <*> single-char message where * is wild is a DCCEX message
+	//the exception being <;> which is part of a WiThrottle message
+	//we re-assign the handler to the nsDCCEXprocess module
+	if ((msg[0] = '<') && (msg[1]!=';') && (msg[2] == '>')) {
+		for (auto& c : clients) {
+			if (c.client == client) {
+				c.HU = "EX";
+				//use nsWiThrottle::handleDataDCCEX to handle future incoming data from this client
+				//and process this first incoming datarequest with the DCCEX processor
+				client->onData(&nsDCCEXprocessor::handleDCCEX, NULL);
+				nsDCCEXprocessor::tokenProcessor(msg, client);
+				return;
+			}
+		}
+	}
+
+
 	/*more data?*/
 	msg = strtok(NULL, "\r\n");
-	}
+	}  //end of while per line of data
 
 	
 }
@@ -358,7 +397,7 @@ static void handleTimeOut(void* arg, AsyncClient* client, uint32_t time) {
 
 static void handleNewClient(void* arg, AsyncClient* client) {
 	Serial.printf("\n new client ip: %s", client->remoteIP().toString().c_str());
-	// add to list
+	// add to vector
 	CLIENT_T client_t;
 	client_t.client = client;
 	clients.push_back(client_t);
@@ -385,7 +424,11 @@ uint8_t nsWiThrottle::clientCount(void) {
 }
 
 
-/*send data to a specific client, or all if client=nullptr*/
+/// <summary>
+/// Send data to a specific client, or all.
+/// </summary>
+/// <param name="data">data to send</param>
+/// <param name="client">specific client, or send to all if nullptr</param>
 void nsWiThrottle::sendToClient(char *data, AsyncClient *client) {
 	for (auto c : clients) {
 		//if no client specified, send to all
@@ -398,12 +441,16 @@ void nsWiThrottle::sendToClient(char *data, AsyncClient *client) {
 	}
 }
 
-//send data to a specific client, or all if client=nullptr. overload takes std::string
-//std::string::max_size() will tell you the theoretical limit imposed by the architecture your program is running under. 
-//internet says ESP will truncate at Ethernet frame buffer len of 1500 bytes
+/// <summary>
+/// send data to a specific client, or all
+/// </summary>
+/// <param name="s">message to send</param>
+/// <param name="client">specific client, or send to all if nullptr</param>
 void nsWiThrottle::sendToClient(std::string s, AsyncClient *client) {
 	//const char *data = s.c_str(); will cause a crash if you use it to call sendToClient
 	//need to copy the data to a new array
+	//std::string::max_size() will tell you the theoretical limit imposed by the architecture your program is running under. 
+	//internet says ESP will truncate at Ethernet frame buffer len of 1500 bytes
 
 	if (s.size() > 0) {
 		char *data = new char[s.size() + 1];
@@ -413,11 +460,6 @@ void nsWiThrottle::sendToClient(std::string s, AsyncClient *client) {
 			
 		//we used new to create *data.  delete now else you create a memory leak
 		delete data;
-
-		//2021-09-09 instead, would this work?  std::string.data is a const pointer to the data
-		//warning: anything that modifies string.data will cause a crash
-		//sendToClient(s.data, client);
-
 	}
 
 }
@@ -884,13 +926,20 @@ void nsWiThrottle::broadcastPower(void) {
 	}
 }
 
-/*queue a message for a specific client, or all if client=nullptr*/
+
+/// <summary>
+/// queue a message for a specific client, or all
+/// </summary>
+/// <param name="s">standard string containing message</param>
+/// <param name="client">spcific client, or all if nullptr</param>
 void nsWiThrottle::queueMessage(std::string s, AsyncClient *client) {
 	CLIENTMESSAGE m;
 	m.toClient = client;
 	m.msg = s;
 	messages.push_back(m);
 }
+
+
 
 /*a consist ID is assigned to indicate a loco slot is tied to a WiThrottle.  It is also used to manage ad-hoc consists on a throttle*/
 void nsWiThrottle::setConsistID(THROTTLE *t) {
@@ -1062,6 +1111,10 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 	//sending to a specific client is blocking if you attempt to send more data before the first transmission
 	//has completed.  for this reason we need to group all messages per client and send as a jumbo message
 
+	//2025-10-03 ask DCCEXprocessor to build a broadcast queue.
+	nsDCCEXprocessor::buildBroadcastQueue(false);
+	nsLOCONETprocessor::buildBroadcastQueue(false);
+
 		//deal with turnout changes, put these in the message queue
 	queueTurnouts(clearFlags);
 	
@@ -1079,11 +1132,20 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 	std::string m;
 	char buf[128];  //2025-03-18 increase from 32 to 128 to handle the function names string
 	char myT[4];  //target throttle 
-
+	
 	//loop for client; we build messages on a per-client basis
 	for (auto c : clients) {
 		//clear msg
 		m.clear();
+		if (c.isDCCEX()){ 
+			//2025-10-03 DCCEX clients are handled in a seperate module
+			nsDCCEXprocessor::sendToClient(c.client);
+			continue;  }
+
+		if (c.isLOCONET()) {
+			nsLOCONETprocessor::sendToClient(c.client);
+			continue;
+		}
 
 		//loop through all throttles per specific client, then for each loco found thereunder, add it to
 		//the block message
@@ -1230,12 +1292,20 @@ trace(
 )
 		sendToClient(m, c.client);
 
-	}//client loop
+	}//per client loop
 
+	//2025-10-22 loconet processing
+	nsLOCONETprocessor::buildBroadcastQueue(false);
+
+	// 2025-10-03  done with all DCCEX message processing, clear its message queue
+	nsDCCEXprocessor::buildBroadcastQueue(true);
+	
 
 	//done with all message processing
 	messages.clear();
 	
+
+
 	//done with all processing on all throttles and all clients.  Only now can we clear flags at loco-slot level
 	if (clearFlags) {
 		for (auto& loc : loco) {
@@ -1288,7 +1358,5 @@ void nsWiThrottle::processTimeout() {
 		
 	}
 }
-
-
-
 #pragma endregion
+

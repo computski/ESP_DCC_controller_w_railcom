@@ -2,7 +2,6 @@
 
 #ifndef _GLOBAL_h
 #define _GLOBAL_h
-
 #if defined(ARDUINO) && ARDUINO >= 100
 	#include "Arduino.h"
 #else
@@ -329,7 +328,7 @@ dcc_init(14,13,true);
 
 
 //set nTRACE to disable, TRACE to enable serial tracing.  Disable for production.
-#define nTRACE   
+#define TRACE   
 
 #ifndef TRACE
 	#define trace(traceCodeBlock) ;
