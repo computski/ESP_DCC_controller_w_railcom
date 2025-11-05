@@ -17,3 +17,5 @@ the RX input on the ESP mini.  The 6N137 has an open collector output buffer and
 The 6N137 also has a gating input on the output stage, and we drive this from railcom sync which is active high during the cutout.  this greatly cuts down on junk data into the UART and reduces its workload.
 
 2025-05-13 fixed a bug in global.h which incorrectly defined the drive pins for the 2-pin drive arrangement on the LMD18200.  Railcom detector now works properly and with loco facing in either direction.
+
+2025-11-05 adding support for JMRI and LocoNet over TCP.  Work in progress.
