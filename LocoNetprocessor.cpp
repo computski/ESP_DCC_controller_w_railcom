@@ -6,6 +6,41 @@
 #include "Global.h"
 #include "DCCcore.h"
 
+/*TO DO
+* loss of loconet client should cause all slots to go to zero speed, and and Status to Common.
+
+
+servic mode  - initiate write
+L: EF 0E 7C 6B 00 00 00 00 00 00 03 7F 7F 0A
+Out RECEIVE EF 0E 7C 6B 00 00 00 00 00 00 03 7F 7F 0A
+
+POM - initiate
+L: EF 0E 7C 6B 00 00 00 00 00 00 03 7F 7F 0A
+Out RECEIVE EF 0E 7C 6B 00 00 00 00 00 00 03 7F 7F 0A
+ <0xEF>,<0E>,<7C>,<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
+
+ Service mode - initiate read, note that JMRI won't send anything if you ask to read when POM
+ diffrence is PCMD is 2B = 0010 1011
+ L: EF 0E 7C 2B 00 00 00 00 00 00 03 7F 7F 4A
+
+ I had expected differing PCMD. 0x6B=0110 1011
+ D7-0
+ D6 1=w 0 =r
+ D5 1= byte mode, 0=bit
+ D4 ty1
+ D3 ty 0
+ D2 1 =ops on mainlines, 0=prog track
+ D1 =res
+ D0 =res
+
+ EF 0E 7C 6B 00 00 00 00 00 1C 06 7F 7F 13   - this is a ready from CV29 (i.e. 1C=128d coded)
+
+
+
+*/
+
+
+
 /*LocoNet
 * 
 Note: Decoder Pro does not see to recognise it has lost TCP connection and does not attempt a re-initialise of LocoNet.  You have to manually restart DP.
@@ -184,7 +219,7 @@ I see a string of BB and B0 initially
 
 		
 		switch (tokens[0]) {
-		
+
 
 		case OPC_RQ_SL_DATA:
 			//request slot data/status block
@@ -195,14 +230,14 @@ I see a string of BB and B0 initially
 		case OPC_LOCO_ADR:
 			/*Request loco address and status, if not found master puts address in a free slot.
 			The Wiki page contains an error, token[1] is ADR2 and token[2] ADR
-			The throttle must then examine the SLOT READ DATA bytes to work out how to process the
-			Master response. If the STATUS1 byte shows the SLOT to be COMMON, IDLE or NEW the throttle
-			may change the SLOT to IN_USE by performing a NULL MOVE instruction <BA>,<slotX>,<slotX>,<chk> )  
-			on this SLOT. This activation mechanism is used to guarantee proper SLOT usage interlocking in a multi-user asynchronous environment.
+			The throttle must then examine the SLOT READ DATA bytes to work out how to process the Master response.
+			If the STATUS1 byte shows the SLOT to be COMMON, IDLE or NEW the throttle
+			may change the SLOT to IN_USE by performing a NULL MOVE instruction <BA>,<slotX>,<slotX>,<chk> on this SLOT.
+			This activation mechanism is used to guarantee proper SLOT usage interlocking in a multi-user asynchronous environment.
 		*/
-		
+
 		{//scope block because we declare variables within
-		
+
 			/*
 			[B0 7A 27 12]  Interrogate LocoNet Turnouts/Sensors with bits a/c/b of 1/1/0; addresses...
 	49-56, 113-120, 177-184, 241-248, 305-312, 369-376, 433-440, 497-504,
@@ -211,7 +246,7 @@ I see a string of BB and B0 initially
 	1585-1592, 1649-1656, 1713-1720, 1777-1784, 1841-1848, 1905-1912, 1969-1976, 2033-2040.
 			*/
 
-						
+
 			if (tokens[1] == 0) {
 				//dealing with a short address
 				snprintf(buf, BUFSIZE, "S%d", tokens[2]);
@@ -219,7 +254,7 @@ I see a string of BB and B0 initially
 			else {
 				//dealing with long address
 				//token[1] will be ADR2 <7+> msb and token[2] is ADR <0-6> lsb, but we need to decode these values back to 
-				uint16_t addr = (tokens[1] <<7) + tokens[2];
+				uint16_t addr = (tokens[1] << 7) + tokens[2];
 				snprintf(buf, BUFSIZE, "L%d", addr);
 			}
 
@@ -231,16 +266,16 @@ I see a string of BB and B0 initially
 				queueMessage("RECEIVE 0xB4 0xBF 0x00 0xF4", client);
 				return;
 			}
-						
+
 			//have a slot.  Respond with OPC_SL_RD_DATA
 			//BUT if we just allocated or bumped a slot then loco[] object itself won't have its address set.  We need to do this now
 			locoPtr = &loco[systemSlot];
 			locoPtr->useLongAddress = buf[0] == 'L' ? true : false;
 			locoPtr->address = atoi(buf + 1);
-	
+
 			//0xE7 0x0E SLOT# STAT1 ADR SPD DIRF TRK SS2 ADR2 SND ID1 ID2 CHK
 			//locoNetSlot is indexed 1 above the systemSlot
-			queueMessage(FN_OPC_SL_RD_DATA(systemSlot+1),client);
+			queueMessage(FN_OPC_SL_RD_DATA(systemSlot + 1), client);
 			break;
 		}//end scope block
 
@@ -248,68 +283,59 @@ I see a string of BB and B0 initially
 			//a NULL MOVE (i.e. source slot= dest slot) from the throttle is a request to take ownership of that loco
 			//we respond with OPC_SL_RD_DATA.  There is no fail response
 			if (tokens[1] == tokens[2]) {
-				if ((tokens[1] < 1) || (tokens[1] > MAX_LOCO)) return;
-				locoPtr = &loco[tokens[1] - 1];
-				//valid locoNet slots are 1 to 127 but we need to translate this to 0 to MAX_LOCO-1
-				locoPtr->LocoNetSTATUS1 |= 0b110000;  //set <5,4> of STATUS1. IN_USE slot refreshed
-				queueMessage(FN_OPC_SL_RD_DATA(tokens[1]), client);
-				
+				//if ((tokens[1] < 1) || (tokens[1] > MAX_LOCO)) return;
+				//locoPtr = &loco[tokens[1] - 1];
+				locoPtr = (LOCO*)getSsytemSlotPtr(tokens[1]);
+				if (locoPtr) {
+					//valid locoNet slots are 1 to 127 but we need to translate this to 0 to MAX_LOCO-1
+					locoPtr->LocoNetSTATUS1 |= 0b110000;  //set <5,4> of STATUS1. IN_USE slot refreshed
+					queueMessage(FN_OPC_SL_RD_DATA(tokens[1]), client);
+				}
 			}
 			return;
-			
+
 		case OPC_SLOT_STAT1:
 			//[B5 01 13 58]  Write slot 1 with status value 19 (0x13) - Loco is Not Consisted, Common and operating in 128 speed step mode.
 			//typically this is how a loco is released
-			if ((tokens[1] < 1) || (tokens[1] > MAX_LOCO)) return;
-			locoPtr = &loco[tokens[1] - 1];
-			locoPtr->LocoNetSTATUS1 =tokens[2];
+			
+			//if ((tokens[1] < 1) || (tokens[1] > MAX_LOCO)) return;
+			//locoPtr = &loco[tokens[1] - 1];
+
+			locoPtr = (LOCO*)getSsytemSlotPtr(tokens[1]);
+			if (locoPtr) {
+				locoPtr->LocoNetSTATUS1 = tokens[2];
+			}
 			return;
 
 		case OPC_LOCO_SND:
-			//set slot sound function.  TBA.
+			//set slot sound function.
+			locoPtr = (LOCO*)getSsytemSlotPtr(tokens[1]);
+			if (locoPtr) {
+				//SND is x,x,x,x,F8,7,6,5 
+				locoPtr->function &= 0xFFF0;
+				locoPtr->function |= (tokens[2] << 4);
+				locoPtr->functionFlag = true;
+			}
+			
 			break;
 
 		case OPC_LOCO_DIRF:
 			//Set slot direction and function 0-4 state.  DIRF encoded as 0,0,DIR,F0,F4,F3,F2,F1
-			if ((tokens[1] < 1) || (tokens[1] > MAX_LOCO)) return;
-			locoPtr = &loco[tokens[1] - 1];
-			writeDIRF_SPD( &tokens[2],nullptr, locoPtr);
+			//if ((tokens[1] < 1) || (tokens[1] > MAX_LOCO)) return;
+			//locoPtr = &loco[tokens[1] - 1];
+
+			locoPtr = (LOCO*)getSsytemSlotPtr(tokens[1]);
+			if (locoPtr) writeDIRF_SPD(&tokens[2], nullptr, locoPtr);
 			return;
 		
 		case OPC_LOCO_SPD:
 				//set slot speed.  LocoNet uses 0=stop, 1=eStop and 0x02-0x7F as the actual speed, so presumably it tops out at 28 for older locos and 127 for modern ones
 				//the DCC ESP system stores speedStep as a value between 0 and 28 or 0 and 127 to represent a speed.
-			if ((tokens[1] < 1) || (tokens[1] > MAX_LOCO)) return;
-			
-			locoPtr = &loco[tokens[1] - 1];
-			writeDIRF_SPD(nullptr, &tokens[2], locoPtr);
-
-					/*
-					switch (tokens[2] ) {
-					
-					case 1:
-						//locoPtr->eStopTimer = 5;   //flag an estop somehow...
-					case 0:
-						locoPtr->speed = 0;
-						locoPtr->speedStep = 0;
-						break;
-
-					default:
-						locoPtr->speedStep = tokens[2]-1;
-					}
-
-					//now calculate as a float percentile
-					if (locoPtr->use128) {
-						locoPtr->speed = locoPtr->speedStep / 127.0;
-					}
-					else {
-						locoPtr->speed = locoPtr->speedStep / 27.0;
-					}
-					
-					locoPtr->changeFlag = true;
-					*/
-
-				return;
+			//if ((tokens[1] < 1) || (tokens[1] > MAX_LOCO)) return;
+			//locoPtr = &loco[tokens[1] - 1];
+			locoPtr = (LOCO*)getSsytemSlotPtr(tokens[1]);
+			if (locoPtr) writeDIRF_SPD(nullptr, &tokens[2], locoPtr);
+			return;
 
 
 			//Next are turnout related commands
@@ -324,11 +350,7 @@ I see a string of BB and B0 initially
 			break;
 
 
-
-
 		}
-
-	
 		return;
 	
 	}//end 4 token
@@ -344,21 +366,183 @@ I see a string of BB and B0 initially
 		
 		if ((tokens[2] != 0x7C) && (tokens[2] != 0x7B )){
 		//write slot data form of command
-			if ((tokens[2] < 1) || (tokens[2] > MAX_LOCO)) return;
-				locoPtr = &loco[tokens[1] - 1];
+			//if ((tokens[2] < 1) || (tokens[2] > MAX_LOCO)) return;
+				//locoPtr = &loco[tokens[1] - 1];
+
+				locoPtr = (LOCO*)getSsytemSlotPtr(tokens[1]);
+				if (!locoPtr) return;
 				locoPtr->LocoNetSTATUS1 = tokens[3];
 				//it seems odd that LocoNet wants to write to the loco address, when it previously had to request the slot whilst giving an address
 				//i.e. it makes no sense to change this address during this command
 				writeDIRF_SPD(&tokens[6], &tokens[5], locoPtr);
 				//why would client write to TRK?   there is a separate command to turn power on/off
+
+				//write to SND, i.e. F8-4
+				locoPtr->function &= 0xFFF0;
+				locoPtr->function |= (tokens[2] << 4);
+				locoPtr->functionFlag = true;
+
+				return;
+		}
+
+		if (tokens[2] == 0x7C) {
+			/*The programmer track is accessed as Special slot #124 ( $7C, 0x7C).  It is a full asynchronous shared system resource.
+			To start Programmer task, write to slot 124 (0x7C). There will be an immediate LACK acknowledge that
+			indicates what programming will be allowed. If a valid programming task is started, then at the final
+			(asynchronous) programming completion, a Slot read <E7> from slot 124 will be sent.  This is the final
+			task status reply
+
+			 This OPC leads to immediate LACK codes:
+				<B4>,<7F>,<7F>,<0x4B>  Function NOT implemented, no reply.
+				<B4>,<7F>,<0>,<0x34> Programmer BUSY , task aborted, no reply.
+				<B4>,<7F>,<1>,<0x35> Task accepted , <E7> reply at completion.
+				<B4>,<7F>,<0x40>,<0x74> Task accepted blind NO <E7> reply at completion.
+
+			Any Slot RD from the master will also contain the Programmer Busy status in bit 3 of the <TRK> byte.
+			OK - so i need to link this into the SM and POM state engines
+			*/
+
+			//programming mode on slot 124.  The LocoNet spec does not support reading values on the Main (i.e. TY0/1 do not allow for this). Bummer.
+
+			//debug respond with LACK B4 7F 01 35  Task accepted , <E7> reply at completion.
+			//or LACK B4 7F 40 74
+			queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);
+			//queueMessage("RECEIVE 0xB4 0x7F 0x40 0x74\n", client);
+
+			/*incoming task message is
+			* <0xEF>,<0E>,<7C>,<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
+			* i.e. same as returned data except PSTAT=0 and possibly hops lopsa are also zero if LocoNet think this is the prog track
+			* 
+			* TO DO.
+			* if we are not in SM then enter SM.  but how do we know to exit SM, because this could be dangerous if the loco was not configured correctly.  That said
+			* this danger would also exist before you entered SM.  i.e. enter it first, then put untested loco on the track
+			* 
+			* 
+			*/
+
+			//enter service mode if we have not done so already.  The only way to exit SM is to cycle track power
+			//if (!power.serviceMode) writeServiceCommand(0, 0, false, true, false);
+			
+			//what kind of request do we have?
+			//NOTE: we have to echo most of the inbound prog bytes, but do this asynchonously.  will need a callback from the SM routine in DCCcore.
+			//NOTE2: if there is a current trip, all we can do is set trackpower=off.  Loconet does not provide a means to flag the cause as a trip nor indicate what
+			//the trip current level was.
+			
+			//DEBuG, just echo that we have read a CV value
+			//D6 of PCMD is write/nRead so for reads we will return 0x88 = 0b1000 1000
+			if ((tokens[3] & 0b01000000) == 0) {
+				//read
+				Serial.println("SMr");
+
+				tokens[0] = 0xE7;  //response code
+				//D7 is in <1> of CVH
+				tokens[8] |= 0b10;
+				tokens[10] = 0b1000; //D6-0
+				tokens[4] = 0; //PSTAT
+				tokens[11] = 0;
+				tokens[12] = 0;
+
+
+				m.clear();
+				m.append("RECEIVE ");
+
+			uint8_t checkSum = 0xFF;
+			
+			for (int i = 0;i < 13;i++) {
+				snprintf(buf, 5, "%02X ",tokens[i]);
+				m.append(buf);
+				checkSum ^= tokens[i];
+			}
+			snprintf(buf, 5, "%02X\n", checkSum);
+			m.append(buf);
+			queueMessage(m, client);
+
+			}
+
+			/*PROBLEM
+			* L: EF 0E 7C 2B 00 00 00 00 00 69 00 7F 7F 20
+
+			SMr
+			Out RECEIVE EF 0E 7C 2B 00 00 00 00 00 69 00 7F 7F 20  0x2b=001 01 0  11  byte read, direct read, SM
+
+			SENT OK
+			RECEIVE 0xB4 0x7F 0x01 0x35
+			RECEIVE EF 0E 7C 2B 00 00 00 00 02 69 08 7F 7F 2A
+
+			DP says timeout error talking to programmer, even though it sends the correct messages back...
+			unless maybe it expects those two 0x7Fs to be zero.
+			
+			
+			NOPE; still get a timeout.  makes no sense, the Master is responding.
+			* <0xEF>,<0E>,<7C>,<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
+			Out RECEIVE EF 0E 7C 2B 00 00 00 00 00 00 03 7F 7F 4A  this is cv1, expected value 3
+			SENT OK
+			RECEIVE 0xB4 0x7F 0x01 0x35
+			RECEIVE EF 0E 7C 2B 00 00 00 00 02 00 08 00 00 43
+
+
+			Try a mainline read. You cannot, DP has greyed out the read.
+			https://loconetovertcp.sourceforge.net/Protocol/SD_blocking_request.svg
+
+			Last gasp, lets not send the LACK message. makes not difference.  give up.  DP does not implement this correctly.
+			https://groups.io/g/jmriusers/topic/decoderpro_cannot_read_write/32973168
+
+			[EF 0E 7C 2B 00 00 00 00 00 00 7F 7F 7F 36]  Byte Read in Direct Mode on Service Track: CV1.  traffic monitor shows command to Master
+			[EF 0E 7C 2B 00 00 00 00 02 00 08 00 00 43]  Byte Read in Direct Mode on Service Track: CV1.  and the Master response, but DP says timeout.
+
+			https://www.jmri.org/help/en/html/hardware/loconet/DCS240.shtml
+
+			https://www.jmri.org/help/en/html/hardware/loconet/LocoNetSim.shtml
+
+			*/
+
+
+
+
+
+
+
+			//usage reg,val,read,enterSM,exitSM
+			//writeServiceCommand(0, 0, false, true, false);
+
+			//so we must always send a LACK to every request to indicate we are processing it
+			//and then we asynchronously return the data
+
+
+			/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
+			
+			*/
+
+
+
+
+
 		}
 
 		return;
 	
+
+ 
+
+
 	}
 
 
 }
+
+/// <summary>
+/// Find system slot corresponding to locoNet slot
+/// </summary>
+/// <param name="locoNetSlot">loconet slot number</param>
+/// <returns>pointer to system slot or nullptr if fail</returns>
+void* nsLOCONETprocessor:: getSsytemSlotPtr(uint8_t locoNetSlot) {
+	//Note: have to declare as void* and later cast to (LOCO*) else compilation fails
+	if ((locoNetSlot < 1) || (locoNetSlot > MAX_LOCO)) return nullptr;
+	return &loco[locoNetSlot-1];
+}
+
+
+
 
 //std::vector<std::uint8_t> tokens;
 std::string nsLOCONETprocessor::echoRequest(std::vector<std::uint8_t> tokens) {
@@ -434,11 +618,11 @@ std::string nsLOCONETprocessor::FN_OPC_SL_RD_DATA(int8_t locoNetSlot) {
 }
 
 /// <summary>
-/// write DIR and or SPD to a loco slot
+/// write DIR and/or SPD to a system slot
 /// </summary>
-/// <param name="loc">pointer to the system loco slot</param>
 /// <param name="dirf">DIRF byte or nullptr</param>
 /// <param name="spd">SPD byte or nullptr</param>
+/// <param name="loc">pointer to the system loco slot</param>
 void nsLOCONETprocessor::writeDIRF_SPD( uint8_t* dirf, uint8_t* spd, void* loc) {
 	//cast loc to LOCO
 	LOCO* l = (LOCO*)loc;

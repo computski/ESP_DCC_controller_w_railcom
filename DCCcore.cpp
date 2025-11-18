@@ -616,6 +616,9 @@ void dccPacketEngine(void) {
 	
 			//2025-02-17 bug fix; create the loco address in the roster if it does not exist.  This makes reading more reliable because more railcom cutouts 
 			//addressed to that loco will be sent
+
+			//2025-11-16 there is a bug created by this; we seem to end up with multiple loco S3 created in the free slots.  This causes erratic behaviour because they all
+			//transmit their speed/dir/func to the track.. not fixed yet
 			
 			{//scope block start
 				char buffer[10];
