@@ -83,6 +83,18 @@ using namespace nsLOCONETprocessor;
 static std::vector<CLIENTMESSAGE> messages;
 
 
+//use this struct to hold decoder programming messages
+struct PROGDETAIL {
+	uint8_t PCMD;
+	uint16_t address;
+	uint16_t cv;
+	uint8_t cvData;
+};
+
+static PROGDETAIL slot124Message;
+
+
+
 
 void nsLOCONETprocessor::handleLocoNet(void* arg, AsyncClient* client, void* data, size_t len) {
 	trace(Serial.printf("\nLOCOnet %s \n", client->remoteIP().toString().c_str());)
@@ -386,6 +398,97 @@ I see a string of BB and B0 initially
 		}
 
 		if (tokens[2] == 0x7C) {
+			//2025-11-19 handle read and write separately
+			//static uint8_t slot124Message[8];  //<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>
+			static uint8_t PCMD;
+			static uint16_t address;
+			static uint16_t cv;
+			static uint8_t cvValue;
+
+			//* <0xEF>,<0E>,<7C>,<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
+			
+			if ((tokens[3] & 0b01000000) == 0) {
+				//read
+				queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
+
+				slot124Message.address = (tokens[5] << 8) + tokens[6];
+				slot124Message.cv = (tokens[8] >> 3) + (tokens[8] & 0b1); // CVH is <0,0,CV9,CV8 - 0,0, D7,CV7> that's whack
+				slot124Message.cv = (slot124Message.cv << 7) + tokens[9];
+				slot124Message.cvData = tokens[10] + ((tokens[9] & 0b10) << 6);
+				//read service mode.  I don't support bit reads
+				
+				//spoof a response for now
+				tokens[0] = 0xE7;  //response code
+				//D7 is in <1> of CVH
+				tokens[8] |= 0b10;
+				tokens[10] = 0b1000; //D6-0, we spoof 0x88 as a response
+				tokens[4] = 0; //PSTAT
+				tokens[11] = 0;
+				tokens[12] = 0;
+
+
+				m.clear();
+				m.append("RECEIVE ");
+
+				uint8_t checkSum = 0xFF;
+
+				for (int i = 0;i < 13;i++) {
+					snprintf(buf, 5, "%02X ", tokens[i]);
+					m.append(buf);
+					checkSum ^= tokens[i];
+				}
+				snprintf(buf, 5, "%02X\n", checkSum);
+				m.append(buf);
+				queueMessage(m, client);
+				return;
+
+			
+			}
+			else {
+				//write
+				queueMessage("RECEIVE 0xB4 0x7F 0x40 0x74\n", client);  //LACK blind accept no response
+
+				//we should NOT have to send an E7 message, but DP seems to expect one.  In fact it expects to see PSTAT=0 meaning there was ACK from the decoder
+				//which means I need to fix up the SM routine to support looking for ACK.
+				//spoof a response for now
+				tokens[0] = 0xE7;  //response code
+				tokens[4] = 0; //PSTAT, pretend all is well=0, 0b10 = no ACK seen from decoder. 0b1 no decoder on track, though how you tell this apart from no ACK...
+				tokens[11] = 0;
+				tokens[12] = 0;
+
+
+				m.clear();
+				m.append("RECEIVE ");
+
+				uint8_t checkSum = 0xFF;
+
+				for (int i = 0;i < 13;i++) {
+					snprintf(buf, 5, "%02X ", tokens[i]);
+					m.append(buf);
+					checkSum ^= tokens[i];
+				}
+				snprintf(buf, 5, "%02X\n", checkSum);
+				m.append(buf);
+				queueMessage(m, client);
+
+
+
+				return;
+			}
+
+			return;
+			//do not execute next block
+
+
+
+
+
+
+
+
+
+
+
 			/*The programmer track is accessed as Special slot #124 ( $7C, 0x7C).  It is a full asynchronous shared system resource.
 			To start Programmer task, write to slot 124 (0x7C). There will be an immediate LACK acknowledge that
 			indicates what programming will be allowed. If a valid programming task is started, then at the final
