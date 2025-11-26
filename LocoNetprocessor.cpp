@@ -93,6 +93,7 @@ struct PROGDETAIL {
 
 static PROGDETAIL slot124Message;
 
+static uint8_t PCMD;
 
 
 
@@ -297,7 +298,7 @@ I see a string of BB and B0 initially
 			if (tokens[1] == tokens[2]) {
 				//if ((tokens[1] < 1) || (tokens[1] > MAX_LOCO)) return;
 				//locoPtr = &loco[tokens[1] - 1];
-				locoPtr = (LOCO*)getSsytemSlotPtr(tokens[1]);
+				locoPtr = (LOCO*)getSytemSlotPtr(tokens[1]);
 				if (locoPtr) {
 					//valid locoNet slots are 1 to 127 but we need to translate this to 0 to MAX_LOCO-1
 					locoPtr->LocoNetSTATUS1 |= 0b110000;  //set <5,4> of STATUS1. IN_USE slot refreshed
@@ -313,7 +314,7 @@ I see a string of BB and B0 initially
 			//if ((tokens[1] < 1) || (tokens[1] > MAX_LOCO)) return;
 			//locoPtr = &loco[tokens[1] - 1];
 
-			locoPtr = (LOCO*)getSsytemSlotPtr(tokens[1]);
+			locoPtr = (LOCO*)getSytemSlotPtr(tokens[1]);
 			if (locoPtr) {
 				locoPtr->LocoNetSTATUS1 = tokens[2];
 			}
@@ -321,7 +322,7 @@ I see a string of BB and B0 initially
 
 		case OPC_LOCO_SND:
 			//set slot sound function.
-			locoPtr = (LOCO*)getSsytemSlotPtr(tokens[1]);
+			locoPtr = (LOCO*)getSytemSlotPtr(tokens[1]);
 			if (locoPtr) {
 				//SND is x,x,x,x,F8,7,6,5 
 				locoPtr->function &= 0xFFF0;
@@ -336,16 +337,16 @@ I see a string of BB and B0 initially
 			//if ((tokens[1] < 1) || (tokens[1] > MAX_LOCO)) return;
 			//locoPtr = &loco[tokens[1] - 1];
 
-			locoPtr = (LOCO*)getSsytemSlotPtr(tokens[1]);
+			locoPtr = (LOCO*)getSytemSlotPtr(tokens[1]);
 			if (locoPtr) writeDIRF_SPD(&tokens[2], nullptr, locoPtr);
 			return;
-		
+
 		case OPC_LOCO_SPD:
-				//set slot speed.  LocoNet uses 0=stop, 1=eStop and 0x02-0x7F as the actual speed, so presumably it tops out at 28 for older locos and 127 for modern ones
-				//the DCC ESP system stores speedStep as a value between 0 and 28 or 0 and 127 to represent a speed.
-			//if ((tokens[1] < 1) || (tokens[1] > MAX_LOCO)) return;
-			//locoPtr = &loco[tokens[1] - 1];
-			locoPtr = (LOCO*)getSsytemSlotPtr(tokens[1]);
+			//set slot speed.  LocoNet uses 0=stop, 1=eStop and 0x02-0x7F as the actual speed, so presumably it tops out at 28 for older locos and 127 for modern ones
+			//the DCC ESP system stores speedStep as a value between 0 and 28 or 0 and 127 to represent a speed.
+		//if ((tokens[1] < 1) || (tokens[1] > MAX_LOCO)) return;
+		//locoPtr = &loco[tokens[1] - 1];
+			locoPtr = (LOCO*)getSytemSlotPtr(tokens[1]);
 			if (locoPtr) writeDIRF_SPD(nullptr, &tokens[2], locoPtr);
 			return;
 
@@ -364,7 +365,7 @@ I see a string of BB and B0 initially
 
 		}
 		return;
-	
+
 	}//end 4 token
 
 	//variable token messages
@@ -375,48 +376,142 @@ I see a string of BB and B0 initially
 		//0xEF 0x0E SLOT# STAT1 ADR SPD DIRF TRK SS2 ADR2 SND ID1 ID2
 		//0xEF 0x0E 0x7C PCD 0 HOPSA LOPSA TRK CVH CVL DATA7 0 0
 		//0xEF 0x0E 0x7B fast clock stuff
-		
-		if ((tokens[2] != 0x7C) && (tokens[2] != 0x7B )){
-		//write slot data form of command
-			//if ((tokens[2] < 1) || (tokens[2] > MAX_LOCO)) return;
-				//locoPtr = &loco[tokens[1] - 1];
 
-				locoPtr = (LOCO*)getSsytemSlotPtr(tokens[1]);
-				if (!locoPtr) return;
-				locoPtr->LocoNetSTATUS1 = tokens[3];
-				//it seems odd that LocoNet wants to write to the loco address, when it previously had to request the slot whilst giving an address
-				//i.e. it makes no sense to change this address during this command
-				writeDIRF_SPD(&tokens[6], &tokens[5], locoPtr);
-				//why would client write to TRK?   there is a separate command to turn power on/off
+		if ((tokens[2] != 0x7C) && (tokens[2] != 0x7B)) {
+			//write slot data form of command
+				//if ((tokens[2] < 1) || (tokens[2] > MAX_LOCO)) return;
+					//locoPtr = &loco[tokens[1] - 1];
 
-				//write to SND, i.e. F8-4
-				locoPtr->function &= 0xFFF0;
-				locoPtr->function |= (tokens[2] << 4);
-				locoPtr->functionFlag = true;
+			locoPtr = (LOCO*)getSytemSlotPtr(tokens[1]);
+			if (!locoPtr) return;
+			locoPtr->LocoNetSTATUS1 = tokens[3];
+			//it seems odd that LocoNet wants to write to the loco address, when it previously had to request the slot whilst giving an address
+			//i.e. it makes no sense to change this address during this command
+			writeDIRF_SPD(&tokens[6], &tokens[5], locoPtr);
+			//why would client write to TRK?   there is a separate command to turn power on/off
 
-				return;
+			//write to SND, i.e. F8-4
+			locoPtr->function &= 0xFFF0;
+			locoPtr->function |= (tokens[2] << 4);
+			locoPtr->functionFlag = true;
+
+			return;
 		}
 
 		if (tokens[2] == 0x7C) {
 			//2025-11-19 handle read and write separately
 			//static uint8_t slot124Message[8];  //<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>
-			static uint8_t PCMD;
-			static uint16_t address;
-			static uint16_t cv;
-			static uint8_t cvValue;
 
 			//* <0xEF>,<0E>,<7C>,<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
-			
-			if ((tokens[3] & 0b01000000) == 0) {
-				//read
+			slot124Message.address = (tokens[5] << 8) + tokens[6];
+			slot124Message.cv = (tokens[8] >> 3) + (tokens[8] & 0b1); // CVH is <0,0,CV9,CV8 - 0,0, D7,CV7> that's whack
+			slot124Message.cv = (slot124Message.cv << 7) + tokens[9];
+			slot124Message.cvData = tokens[10] + ((tokens[9] & 0b10) << 6);
+			slot124Message.PCMD = tokens[3];
+
+
+			/*think again...
+			1. check we can handle, i.e. SM direct RW or OPS RW with/out ACK
+			2. if SM... do R/W
+			3. if POM... do R/W  in the case of no ACK, the callback routine ignores ACK-state and declares success.
+
+
+			*/
+			//START REWRITE
+			bool doRead;
+			switch (tokens[3] & 0b00111100) {
+			case 0b00101000: //direct, SM, byte
+			case 0b00101100: //ops byte with ACK
+			case 0b00100100: //ops byte with no-ACK
+				//read. enter service mode
+				writeServiceCommand(0, 0, true, true, false, nullptr);
+				break;
+			default:
+				//operation not supported
+				queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
+				return;
+			}
+			doRead = (tokens[3] & 0b01000000) == 0 ? true : false;
+
+			if ((tokens[3] & 0b100) == 0){
+				//SERVICE MODE
+				if (writeServiceCommand(slot124Message.cv, slot124Message.cvData, doRead, false, false, &callbackLocoNet)) {
+					//read requested, E7 response is via an asynchronous callback
+					queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
+				}
+				else {
+					//programmer is busy
+					queueMessage("RECEIVE 0xB4 0x7F 0x00 0x34\n", client);  //LACK and busy
+				}
+				return;
+
+			}
+			else
+			{//POM MODE
+				char addr[8];   //A123 L8000 S3
+				char cvVal[8];  //B8 R8 is byte write-8 read-8. S and C used for set and clear a bit
+				snprintf(addr, sizeof(addr), "%s%d", "a", 5);
+
+				if (slot124Message.address > 127) {snprintf(addr, sizeof(addr), "L%d", slot124Message.address);}
+				else{snprintf(addr, sizeof(addr), "S%d", slot124Message.address);}
+
+				if (doRead) {snprintf(cvVal, sizeof(cvVal), "R%d", slot124Message.cvData);}
+				else { snprintf(cvVal, sizeof(cvVal), "W%d", slot124Message.cvData); }
+
+				writePOMcommand(addr, slot124Message.cv, cvVal);
+				//writing a POM command is just a matter of queuing a command in the DCC output buffer, there is no 'busy' to contend with
+				//if JMRI is not expecting ACK then possibly we could respond here with LACK-accept-blind, but I need to test how DP behaves
 				queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
 
-				slot124Message.address = (tokens[5] << 8) + tokens[6];
-				slot124Message.cv = (tokens[8] >> 3) + (tokens[8] & 0b1); // CVH is <0,0,CV9,CV8 - 0,0, D7,CV7> that's whack
-				slot124Message.cv = (slot124Message.cv << 7) + tokens[9];
-				slot124Message.cvData = tokens[10] + ((tokens[9] & 0b10) << 6);
-				//read service mode.  I don't support bit reads
+//if we are expecting ACK then this comes asynchonously via railcom and needs a callback to a handler in this namespace
+				//if not, we can just give the E7 response now
 				
+				//E7 response...here
+				
+				
+				
+				
+				
+				return;
+			}
+
+
+
+
+
+
+
+
+			//END REWRITE
+
+			if ((tokens[3] & 0b01000000) == 0) {
+				//READ operation.
+				
+				switch (tokens[3] & 0b00111100) {
+				case 0b00101000: //direct, SM, byte
+				case 0b00101100: //ops byte with ACK
+				case 0b00100100: //ops byte with no-ACK
+					//read. enter service mode
+					writeServiceCommand(0, 0, true, true, false, nullptr);
+					break;
+				default:
+					//operation not supported
+					queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
+					return;
+				}
+
+				if (writeServiceCommand(slot124Message.cv, slot124Message.cvData, true, false, false, &callbackLocoNet)) {
+					//initiate the read
+					queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
+
+				}
+				else {
+					//programmer is busy
+					queueMessage("RECEIVE 0xB4 0x7F 0x00 0x34\n", client);  //LACK and will respond with E7
+				}
+				return;
+
+				/*
 				//spoof a response for now
 				tokens[0] = 0xE7;  //response code
 				//D7 is in <1> of CVH
@@ -441,11 +536,11 @@ I see a string of BB and B0 initially
 				m.append(buf);
 				queueMessage(m, client);
 				return;
-
+				*/
 			
 			}
 			else {
-				//write
+				//WRITE operation
 				queueMessage("RECEIVE 0xB4 0x7F 0x40 0x74\n", client);  //LACK blind accept no response
 
 				//we should NOT have to send an E7 message, but DP seems to expect one.  In fact it expects to see PSTAT=0 meaning there was ACK from the decoder
@@ -634,11 +729,56 @@ I see a string of BB and B0 initially
 }
 
 /// <summary>
+/// handles callbacks from DCCcore relating to Service Mode and POM. Does not support bit manipulation.
+/// </summary>
+/// <param name="ack">true if ACK seen, meaning data was read/written correctly</param>
+/// <param name="cvReg">cv register</param>
+/// <param name="cvVal">cv data</param>
+void nsLOCONETprocessor::callbackLocoNet(bool ack, uint16_t cvReg, uint8_t cvVal) {
+	Serial.println("FANTASTIC");
+	/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
+	PSTAT is <7-4> reserved <3> user abort <2> failed read (no ACK) <1> no write ACK <0> no loco
+	*/
+	std::string m;
+	uint8_t PSTAT;
+	uint8_t checksum=0xFF;
+	//SM, for read and write we expect ACK
+	//POM, if ACK was demanded we need to confirm if we saw it
+	
+	if ((slot124Message.PCMD & 0b00100) == 0) {
+		//POM, if client expects ACK we need to confirm we saw it. TY=00 is no act TY=01 expect ACK
+
+		//better to mask the 5 bits in and then do specific test
+
+	}
+	else if (true) {
+	
+	
+	}
+	else {
+		//SM
+		if ((slot124Message.PCMD & 0b100000) == 0) {
+			//read
+			PSTAT += ack ? 0: 0b100;
+		}
+		else {
+		//write
+			PSTAT += ack ? 0:0b10;
+		}
+	}
+
+	
+
+
+}
+
+
+/// <summary>
 /// Find system slot corresponding to locoNet slot
 /// </summary>
 /// <param name="locoNetSlot">loconet slot number</param>
 /// <returns>pointer to system slot or nullptr if fail</returns>
-void* nsLOCONETprocessor:: getSsytemSlotPtr(uint8_t locoNetSlot) {
+void* nsLOCONETprocessor:: getSytemSlotPtr(uint8_t locoNetSlot) {
 	//Note: have to declare as void* and later cast to (LOCO*) else compilation fails
 	if ((locoNetSlot < 1) || (locoNetSlot > MAX_LOCO)) return nullptr;
 	return &loco[locoNetSlot-1];

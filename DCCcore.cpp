@@ -8,7 +8,7 @@
 #include "DCCcore.h"
 #include "DCClayer1.h"
 #include "DCCweb.h"
-#include "DCCEXprocessor.h"
+//#include "DCCEXprocessor.h"
 
 
 #include <LiquidCrystal_I2C.h>   //Github mlinares1998/NewLiquidCrystal
@@ -55,6 +55,9 @@ of addresses having sub-elements 1 to 4 beneath them (which the DCC++ protocol i
 
 */
 
+//2025-11-20 pointer to a callback function in the locoNetprocessor
+//https://stackoverflow.com/questions/1789807/function-pointer-as-an-argument
+static void (*callbackPtr)(bool, uint16_t, uint8_t);    //abc
 
 
 
@@ -222,6 +225,9 @@ enum machineSTATE
 
 /*statics*/
 machineSTATE m_machineSE = M_BOOT;
+
+
+
 
 #pragma region Test_and_debug
 /*DEBUG ROUTINES*/
@@ -780,15 +786,37 @@ void dccPacketEngine(void) {
 			DCCpacket.data[3] = DCCpacket.data[0] ^ DCCpacket.data[1] ^ DCCpacket.data[2];
 			DCCpacket.packetLen = 4;
 			m_cv.state = D_RESET;
+			ina219Mode(false);  //start looking for ACK pulse
 			break;
 
 		case D_RESET:
-			/*6 or more write or reset packets*/
+			/*6 or more write or reset packets.  This is the decoder recovery time*/
 			m_cv.packetCount = 10;
 			DCCpacket.data[0] = 0x00;
 			DCCpacket.data[1] = 0x00;
 			DCCpacket.data[2] = 0x00;
 			DCCpacket.packetLen = 3;
+			m_cv.state = D_ACK;
+			//2025-11-21 want to return to average mode but not until all the packets have been sent.
+			//ina219Mode(true);
+			//AND we need to sample the ackFlag just prior to entering idle, so we prob need another state
+
+			break;
+
+		case D_ACK:
+			//2025-11-21 look for ACK
+#ifdef USE_ANALOG_MEASUREMENT
+/*when detecting a 6mS current pulse using the AD converter, this is done outside of this routine
+on a 1mS sample frequency. This routine won't be called again until the RD_RESET packet has been
+sent out*/
+#else
+			//read the result of the one-time sample. was 128 samples, and we need one third  of these to be >55mA up-pulse
+			power.ackFlag = ((ina219.getCurrent_mA() - power.ackBase_mA) > 20) ? true : false;
+#endif		
+
+			//revert to average mode, and invoke a callback
+			ina219Mode(true); 
+			if (callbackPtr) callbackPtr(power.ackFlag,m_cv.cvReg,m_cv.cvData);
 			m_cv.state = CV_IDLE;
 			break;
 
@@ -888,7 +916,6 @@ void dccPacketEngine(void) {
 				else
 				{//byte verify failed, indicate we have unknown value
 					trace(Serial.printf("verify fail %d \n\r", m_cv.cvData);)
-
 						m_cv.cvData = -1;
 				}
 				m_cv.state = CV_IDLE;
@@ -904,8 +931,11 @@ void dccPacketEngine(void) {
 				nsDCCweb::broadcastSMreadResult(m_cv.cvReg, m_cv.cvData);
 				
 				//2025-10-04 added DCCEX protocol support
-				nsDCCEXprocessor::broadcastSMreadResult(m_cv.cvReg, m_cv.cvData);
-				
+				//nsDCCEXprocessor::broadcastSMreadResult(m_cv.cvReg, m_cv.cvData);
+		
+				//2025-11-20 more elegant, invoke the callback function which was passed to writeSM
+				if (callbackPtr) callbackPtr(power.ackFlag,m_cv.cvReg,m_cv.cvData);
+
 			}
 			
 
@@ -1197,6 +1227,7 @@ int8_t findTurnout(uint16_t turnoutAddress) {
 returns true if triggering a display update
 2020-12-21 it only supports byte write*/
 bool setServiceModefromKey(void) {
+	callbackPtr = nullptr;
 	uint8_t i;
 	if (keypad.keyHeld) { return false; }
 	if (keypad.keyASCII >= '0' && keypad.keyASCII <= '9') {
@@ -3301,17 +3332,17 @@ bool writePOMcommand(const char* address, uint16_t cv, const char* val) {
 
 
 /// <summary>
-/// Enter/Exit service mode.  Set a cv register value and perform a DIRECT byte write.
-/// DCC specification does not support running a loco in service mode.
+/// Enter/Exit service mode. Set a cv register value and perform a DIRECT byte read/write.
+/// DCC specification does not allow locos to be driven in service mode.
 /// </summary>
 /// <param name="cvReg">cv target register</param>
 /// <param name="cvVal">cv value to write</param>
-/// <param name="read">true to read a cv register</param>
-/// <param name="enterSM">establish service mode</param>
-/// <param name="exitSM">terminate service mode</param>
-/// <returns>true for writes. false for reads if a read is pending, true if read was initiated. Read result is provided
-/// asyncrhonously via a call to nsDCCweb and is controlled in the machine state engine</returns>
-bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM, bool exitSM) {
+/// <param name="read">true to read a cv</param>
+/// <param name="enterSM">true will establish service mode</param>
+/// <param name="exitSM">true will terminate service mode</param>
+/// <param name="callback">pointer to callback function that will handle the async operation result</param>
+/// <returns>true if command accepted, false if service mode is busy with read/write. Read data and ack are returned asynchronously.</returns>
+bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM, bool exitSM, void (*callback)(bool,uint16_t,uint8_t)) {
 	//2020-12-27 routine is initiate-only.  i.e. initiate a write, initiate a read.  in the case of read
 	//there is a call back to nsDCCweb from the machine state engine
 
@@ -3319,6 +3350,12 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM,
 	//and reading of CVs.  If you can read a CV then reasonably you can assume the loco is wired 
 	//correctly and will operate on the Main.
 	//https://github.com/esp8266/Arduino/issues/4689
+
+	
+	//https://stackoverflow.com/questions/1789807/function-pointer-as-an-argument
+	//we copy the callback function pointer to a static var for use later in the DCCpacketEngine
+	callbackPtr = callback;
+
 
 	if (enterSM) {
 		if (power.serviceMode) return true;
@@ -3348,6 +3385,9 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM,
 		return true;
 	}
 
+	//2025-11-21 check the programmer is not busy and that the unit is in service mode
+	if (m_cv.state != CV_IDLE) return false;
+	if (!power.serviceMode) return false;
 
 
 	if (!read) {

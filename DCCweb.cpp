@@ -900,7 +900,7 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 
 			//causes exception 29
 			//from WS: {"type":"dccUI","cmd":"service","reg":0,"value":-1,"action":"enter"}
-			writeServiceCommand(0, 0, false, true, false);
+			writeServiceCommand(0, 0, false, true, false, nullptr);
 		}
 
 		//if you fail to exit SM, service.mode wll be true which limits power
@@ -909,19 +909,19 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 		if (strcmp(action, "exit") == 0) {
 			//exit service mode, returns to full power
 			Serial.println("svc#4");
-			writeServiceCommand(0, 0, false, false, true);
+			writeServiceCommand(0, 0, false, false, true, nullptr);
 		}
 
 		if (strcmp(action, "direct") == 0) {
 			//direct write
 			if (cv_val == 0) return;
-			writeServiceCommand(cv_reg, cv_val, false, false, false);
+			writeServiceCommand(cv_reg, cv_val, false, false, false, nullptr);
 		}
 
 		if (strcmp(action, "read") == 0) {
 			//call once to iniate a read. the result is provided via a callback
 			if (cv_reg == 0) return;
-			writeServiceCommand(cv_reg, 0, true, false, false);
+			writeServiceCommand(cv_reg, 0, true, false, false, nullptr);
 		}
 		return;
 	}
