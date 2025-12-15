@@ -39,6 +39,10 @@
             visibility: hidden;
         }
 
+        .jg {
+                 visibility:hidden; 
+        }
+
 
         input[type=text], .address {
             font-size: 4vmin;
@@ -82,16 +86,16 @@
 
         //define send-receive objects
        
-        var hardware = { "type": "dccUI", "cmd": "hardware", "SSID": "DCC_02", "IP": "192.168.7.1", "MAC": "return of the", "pwd": "", "wsPort": 12080, "wiPort": 12090, "action": "poll" };
+        var hardware = { "type": "dccUI", "cmd": "hardware", "SSID": "DCC_02", "IP": "192.168.7.1", "MAC": "return of the", "pwd": "", "wsPort": 12080, "wiPort": 12090, "action": "poll" , DSKY:false};
         //if action=fail this indicates the changes were not successful and the current settings are returned
-         /*
+         
         var roster = {
             "type": "dccUI", "cmd": "roster", "locos": [{ "slot": 0, "address": 3, "useLong": false, "use128": true, "name": "", "inUse": false },
             { "slot": 1, "address": 4, "useLong": false, "use128": true, "name": "ivor", "inUse": true }]
         };
         //long version of roster is for use with ws:echo for development
-        */
-        var roster = {"type": "dccUI", "cmd": "roster", "locos": [] };
+        
+        var roster = { "type": "dccUI", "cmd": "roster",  "locos": [] };
         var jog = { "type": "dccUI", "cmd": "jog", "loco": 0 };
 
 
@@ -144,6 +148,10 @@
                         wsUri = "ws://" + hardware.IP + ":" + hardware.wsPort
                         if (console) console.log(wsUri);
                         //connect to the websocket provided by the ESP server
+
+
+                       
+
                         initWebsocket();
                     }
                 }
@@ -172,7 +180,7 @@
                     //if open, opening, closing
                     return;
                 }
-                
+
             };
 
 
@@ -255,6 +263,17 @@
                 if (myObj.type != "dccUI") {
                     return;
                 }
+
+                //if DSKY present, keep the jog column hidden
+                if (!hardware.DSKY) {
+                    var elements = document.querySelectorAll('.jg');
+                    for (var i = 0; i < elements.length; i++) {
+                         elements[i].style.visibility = "inherit";
+                    }
+                }
+
+
+
 
 
                 //read data into specific json object
@@ -386,19 +405,22 @@
         <!--to keep it simple, pre define a table with 8 locos in, we can hide those we don't need with visibility:collapse-->
         <!--rather than lock inputs, just set tr background grey if item is in use. changes will be ignored-->
 
-
+        <!--bug style visiblity:collapse does not work on the jog column as it does not work on checkboxes.-->
         <table id="entries" border="0" style="width:100%">
-            <thead> <tr><td>slot</td><td>address</td><td>Long</td><td>128</td><td>name</td><td>jog</td></tr> </thead>
+            <colgroup><col /><col /><col /><col /><col /><col style="display:none" /></colgroup>
+            <thead>
+                <tr><td>slot</td><td>address</td><td>Long</td><td>128</td><td>name</td><td class="jg">jog</td></tr>
+            </thead>
             <tbody>
-                <tr id="r0"><td>0</td><td><input type="text" id="a0" /></td><td><input type="checkbox" id="ck0_0" /></td><td><input type="checkbox" id="ck1_0" /></td><td><input type="text" maxlength="8" id="n0" /></td><td><input type="checkbox" id="ck2_0" onclick="setJog(this)" /></td></tr>
-                <tr id="r1"><td>1</td><td><input type="text" id="a1" /></td><td><input type="checkbox" id="ck0_1" /></td><td><input type="checkbox" id="ck1_1" /></td><td><input type="text" maxlength="8" id="n1" /></td><td><input type="checkbox" id="ck2_1" onclick="setJog(this)" /></td></tr>
-                <tr id="r2"><td>2</td><td><input type="text" id="a2" /></td><td><input type="checkbox" id="ck0_2" /></td><td><input type="checkbox" id="ck1_2" /></td><td><input type="text" maxlength="8" id="n2" /></td><td><input type="checkbox" id="ck2_2" onclick="setJog(this)" /></td></tr>
-                <tr id="r3"><td>3</td><td><input type="text" id="a3" /></td><td><input type="checkbox" id="ck0_3" /></td><td><input type="checkbox" id="ck1_3" /></td><td><input type="text" maxlength="8" id="n3" /></td><td><input type="checkbox" id="ck2_3" onclick="setJog(this)" /></td></tr>
+                <tr id="r0"><td>0</td><td><input type="text" id="a0" /></td><td><input type="checkbox" id="ck0_0" /></td><td><input type="checkbox" id="ck1_0" /></td><td><input type="text" maxlength="8" id="n0" /></td><td class="jg"><input  type="checkbox" id="ck2_0" onclick="setJog(this)" /></td></tr>
+                <tr id="r1"><td>1</td><td><input type="text" id="a1" /></td><td><input type="checkbox" id="ck0_1" /></td><td><input type="checkbox" id="ck1_1" /></td><td><input type="text" maxlength="8" id="n1" /></td><td class="jg" ><input type="checkbox" id="ck2_1" onclick="setJog(this)" /></td></tr>
+                <tr id="r2"><td>2</td><td><input type="text" id="a2" /></td><td><input type="checkbox" id="ck0_2" /></td><td><input type="checkbox" id="ck1_2" /></td><td><input type="text" maxlength="8" id="n2" /></td><td class="jg"><input type="checkbox" id="ck2_2" onclick="setJog(this)" /></td></tr>
+                <tr id="r3"><td>3</td><td><input type="text" id="a3" /></td><td><input type="checkbox" id="ck0_3" /></td><td><input type="checkbox" id="ck1_3" /></td><td><input type="text" maxlength="8" id="n3" /></td><td class="jg"><input type="checkbox" id="ck2_3" onclick="setJog(this)" /></td></tr>
 
-                <tr id="r4"><td>4</td><td><input type="text" id="a4" /></td><td><input type="checkbox" id="ck0_4" /></td><td><input type="checkbox" id="ck1_4" /></td><td><input type="text" maxlength="8" id="n4" /></td><td><input type="checkbox" id="ck2_4" onclick="setJog(this)" /></td></tr>
-                <tr id="r5"><td>5</td><td><input type="text" id="a5" /></td><td><input type="checkbox" id="ck0_5" /></td><td><input type="checkbox" id="ck1_5" /></td><td><input type="text" maxlength="8" id="n5" /></td><td><input type="checkbox" id="ck2_5" onclick="setJog(this)" /></td></tr>
-                <tr id="r6"><td>6</td><td><input type="text" id="a6" /></td><td><input type="checkbox" id="ck0_6" /></td><td><input type="checkbox" id="ck1_6" /></td><td><input type="text" maxlength="8" id="n6" /></td><td><input type="checkbox" id="ck2_6" onclick="setJog(this)" /></td></tr>
-                <tr id="r7"><td>7</td><td><input type="text" id="a7" /></td><td><input type="checkbox" id="ck0_7" /></td><td><input type="checkbox" id="ck1_7" /></td><td><input type="text" maxlength="8" id="n7" /></td><td><input type="checkbox" id="ck2_7" onclick="setJog(this)" /></td></tr>
+                <tr id="r4"><td>4</td><td><input type="text" id="a4" /></td><td><input type="checkbox" id="ck0_4" /></td><td><input type="checkbox" id="ck1_4" /></td><td><input type="text" maxlength="8" id="n4" /></td><td class="jg"><input type="checkbox" id="ck2_4" onclick="setJog(this)" /></td></tr>
+                <tr id="r5"><td>5</td><td><input type="text" id="a5" /></td><td><input type="checkbox" id="ck0_5" /></td><td><input type="checkbox" id="ck1_5" /></td><td><input type="text" maxlength="8" id="n5" /></td><td class="jg"><input type="checkbox" id="ck2_5" onclick="setJog(this)" /></td></tr>
+                <tr id="r6"><td>6</td><td><input type="text" id="a6" /></td><td><input type="checkbox" id="ck0_6" /></td><td><input type="checkbox" id="ck1_6" /></td><td><input type="text" maxlength="8" id="n6" /></td><td class="jg"><input type="checkbox" id="ck2_6" onclick="setJog(this)" /></td></tr>
+                <tr id="r7"><td>7</td><td><input type="text" id="a7" /></td><td><input type="checkbox" id="ck0_7" /></td><td><input type="checkbox" id="ck1_7" /></td><td><input type="text" maxlength="8" id="n7" /></td><td class="jg"><input type="checkbox" id="ck2_7" onclick="setJog(this)" /></td></tr>
 
             </tbody>
 
