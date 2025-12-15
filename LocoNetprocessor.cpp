@@ -403,10 +403,11 @@ I see a string of BB and B0 initially
 			//static uint8_t slot124Message[8];  //<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>
 
 			//* <0xEF>,<0E>,<7C>,<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
-			slot124Message.address = (tokens[5] << 8) + tokens[6];
+			slot124Message.address = (tokens[5] << 7) + tokens[6];
 			slot124Message.cv = (tokens[8] >> 3) + (tokens[8] & 0b1); // CVH is <0,0,CV9,CV8 - 0,0, D7,CV7> that's whack
 			slot124Message.cv = (slot124Message.cv << 7) + tokens[9];
-			slot124Message.cvData = tokens[10] + ((tokens[9] & 0b10) << 6);
+			slot124Message.cvData = tokens[10]; //data7  
+			slot124Message.cvData += (tokens[8] & 0b10) == 0?0:0x80;//D7 from CVH
 			slot124Message.PCMD = tokens[3];
 
 
@@ -423,7 +424,7 @@ I see a string of BB and B0 initially
 			case 0b00101000: //direct, SM, byte
 			case 0b00101100: //ops byte with ACK
 			case 0b00100100: //ops byte with no-ACK
-				//read. enter service mode
+				//enter service mode
 				writeServiceCommand(0, 0, true, true, false, nullptr);
 				break;
 			default:
@@ -467,22 +468,55 @@ I see a string of BB and B0 initially
 				//if not, we can just give the E7 response now
 				
 				//E7 response...here
+				/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>*/
+
+				std::string m;
+				m.append("RECEIVE E7 0E 7C ");
+				uint8_t checksum = 0xFF ^ 0xE7 ^ 0x0E ^ 0x7C;
 				
+				snprintf(buf, 5, "%02X ", slot124Message.PCMD);
+				m.append(buf);
+				checksum ^= slot124Message.PCMD;
+				m.append("00 "); //PSTAT, lets pretend no errors
+				//HOPSA is 6 msb of an 11 bit address, LOPSA is 7 lsb of address, .
+				snprintf(buf, 5, "%02X ", slot124Message.address >> 7);
+				m.append(buf);
+				checksum ^= (slot124Message.address >> 7);
+				snprintf(buf, 5, "%02X ", slot124Message.address & 0x7F);
+				m.append(buf);
+				checksum ^= (slot124Message.address & 0x7F);
+				//TRK is 0b101 for now, <1,0> are estop, power-on
+				uint8_t trk = 0b100;
+				trk += power.trackPower ? 1 : 0;
+				snprintf(buf, 5, "%02X ", trk);
+				m.append(buf);
+				checksum ^= trk;
+				//CVH is  <0,0,CV9,CV8 - 0,0, D7,CV7>
+				uint8_t cvh = (slot124Message.cv >> 7);  //preserve <cv9,8,7> as lsb
+				cvh = cvh << 3; //<cv 9,8,7 0 0 0>
+				cvh += (cvh & 0b1000) == 0 ? 0 : 1;  //copy cv7 to 0 bit posn
+				cvh &= 0b00110001; //clear bits 3,2,1
+				cvh += (slot124Message.cvData & 0x80) == 0 ? 0 : 1;//add in D7 databit
+				snprintf(buf, 5, "%02X ", cvh);
+				m.append(buf);
+				checksum ^= cvh;
+				snprintf(buf, 5, "%02X ", slot124Message.cv & 0x7F);
+				m.append(buf);
+				checksum ^= (slot124Message.cv & 0x7F);
+				snprintf(buf, 5, "00 00 %02X ", checksum);
+				m.append(buf);
 				
-				
-				
-				
+				queueMessage(m, client);
 				return;
 			}
 
 
 
-
-
-
-
-
+			return;
 			//END REWRITE
+
+
+			//old code, this will never execute
 
 			if ((tokens[3] & 0b01000000) == 0) {
 				//READ operation.
