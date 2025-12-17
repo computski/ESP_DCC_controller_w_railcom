@@ -3433,6 +3433,15 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM,
 	return false;
 }
 
+/// <summary>
+/// check if Service Mode is busy with an operation. Does not check if we are actually in SM.
+/// </summary>
+/// <returns>true if busy</returns>
+bool ServiceModeBusy(void) {
+	if (m_cv.state != CV_IDLE) return true;
+	return false;
+}
+
 
 
 /// <summary>

@@ -43,7 +43,7 @@ Out RECEIVE EF 0E 7C 6B 00 00 00 00 00 00 03 7F 7F 0A
 
 /*LocoNet
 * 
-Note: Decoder Pro does not see to recognise it has lost TCP connection and does not attempt a re-initialise of LocoNet.  You have to manually restart DP.
+Note: Decoder Pro (DP) does not see to recognise it has lost TCP connection and does not attempt a re-initialise of LocoNet.  You have to manually restart DP.
 
 DP does not seem to do anything with the data i am transmitting to it.  It transmits SEND 00 11 etc which is not to spec (no mention of send) so maybe its expecting
 some preface word to the returning hex?
@@ -83,17 +83,20 @@ using namespace nsLOCONETprocessor;
 static std::vector<CLIENTMESSAGE> messages;
 
 
-//use this struct to hold decoder programming messages
+//use this struct to hold decoder programming messages and because the response is async we need to hold a pointer
+//to the client that launched the original programmer task.
 struct PROGDETAIL {
 	uint8_t PCMD;
+	uint8_t PSTAT;
 	uint16_t address;
 	uint16_t cv;
 	uint8_t cvData;
+	AsyncClient* client;
 };
 
 static PROGDETAIL slot124Message;
 
-static uint8_t PCMD;
+//static uint8_t PCMD;
 
 
 
@@ -310,9 +313,7 @@ I see a string of BB and B0 initially
 		case OPC_SLOT_STAT1:
 			//[B5 01 13 58]  Write slot 1 with status value 19 (0x13) - Loco is Not Consisted, Common and operating in 128 speed step mode.
 			//typically this is how a loco is released
-			
-			//if ((tokens[1] < 1) || (tokens[1] > MAX_LOCO)) return;
-			//locoPtr = &loco[tokens[1] - 1];
+				
 
 			locoPtr = (LOCO*)getSytemSlotPtr(tokens[1]);
 			if (locoPtr) {
@@ -321,7 +322,7 @@ I see a string of BB and B0 initially
 			return;
 
 		case OPC_LOCO_SND:
-			//set slot sound function.
+			//set slot sound function.  This is really just F5-8
 			locoPtr = (LOCO*)getSytemSlotPtr(tokens[1]);
 			if (locoPtr) {
 				//SND is x,x,x,x,F8,7,6,5 
@@ -334,9 +335,6 @@ I see a string of BB and B0 initially
 
 		case OPC_LOCO_DIRF:
 			//Set slot direction and function 0-4 state.  DIRF encoded as 0,0,DIR,F0,F4,F3,F2,F1
-			//if ((tokens[1] < 1) || (tokens[1] > MAX_LOCO)) return;
-			//locoPtr = &loco[tokens[1] - 1];
-
 			locoPtr = (LOCO*)getSytemSlotPtr(tokens[1]);
 			if (locoPtr) writeDIRF_SPD(&tokens[2], nullptr, locoPtr);
 			return;
@@ -344,8 +342,6 @@ I see a string of BB and B0 initially
 		case OPC_LOCO_SPD:
 			//set slot speed.  LocoNet uses 0=stop, 1=eStop and 0x02-0x7F as the actual speed, so presumably it tops out at 28 for older locos and 127 for modern ones
 			//the DCC ESP system stores speedStep as a value between 0 and 28 or 0 and 127 to represent a speed.
-		//if ((tokens[1] < 1) || (tokens[1] > MAX_LOCO)) return;
-		//locoPtr = &loco[tokens[1] - 1];
 			locoPtr = (LOCO*)getSytemSlotPtr(tokens[1]);
 			if (locoPtr) writeDIRF_SPD(nullptr, &tokens[2], locoPtr);
 			return;
@@ -399,8 +395,27 @@ I see a string of BB and B0 initially
 		}
 
 		if (tokens[2] == 0x7C) {
-			//2025-11-19 handle read and write separately
-			//static uint8_t slot124Message[8];  //<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>
+			/*PROGRAMMER TASK
+			Programmer track is accessed as Special slot 124 (0x7C).It is a full asynchronous shared system resource.
+			To start Programmer task, write to slot 124 (0x7C).There will be an immediate LACK acknowledge that
+			indicates what programming will be allowed.If a valid programming task is started, then at the final
+			(asynchronous) programming completion, a Slot read <E7> from slot 124 will be sent.This is the final
+			task status reply.
+
+			This OPC leads to immediate LACK codes :
+			<B4>, <7F>, <7F>, <0x4B>  Function NOT implemented, no reply.
+			<B4>, <7F>, <0>, <0x34> Programmer BUSY, task aborted, no reply.
+			<B4>, <7F>, <1>, <0x35> Task accepted, <E7> reply at completion.
+			<B4>, <7F>, <0x40>, <0x74> Task accepted blind NO <E7> reply at completion.
+			Any Slot RD from the master will also contain the Programmer Busy status in bit 3 of the <TRK> byte.
+			*/
+					
+			
+			//2025-12-16 to do. Rethink.  if we want an SM operation, we first need to check that SM is not busy because we don't wish to
+			//overwrite slot124Message when one is still pending.  POM is a non-issue as it will never be 'busy' unless waiting for an ACK pulse.
+
+			
+			slot124Message.client = client;
 
 			//* <0xEF>,<0E>,<7C>,<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
 			slot124Message.address = (tokens[5] << 7) + tokens[6];
@@ -417,6 +432,8 @@ I see a string of BB and B0 initially
 			3. if POM... do R/W  in the case of no ACK, the callback routine ignores ACK-state and declares success.
 
 
+			2025-12-16 what if we try to do another prog cmd to soon?  it will get rejected but slot124Message and might overwrite the last valid slot124
+
 			*/
 			//START REWRITE
 			bool doRead;
@@ -424,7 +441,7 @@ I see a string of BB and B0 initially
 			case 0b00101000: //direct, SM, byte
 			case 0b00101100: //ops byte with ACK
 			case 0b00100100: //ops byte with no-ACK
-				//enter service mode
+				//enter service mode, this is a call to DCCcore.cpp
 				writeServiceCommand(0, 0, true, true, false, nullptr);
 				break;
 			default:
@@ -436,12 +453,17 @@ I see a string of BB and B0 initially
 
 			if ((tokens[3] & 0b100) == 0){
 				//SERVICE MODE
+				if (ServiceModeBusy) {
+					queueMessage("RECEIVE 0xB4 0x7F 0x00 0x34\n", client);  //LACK and busy
+					return;
+				}
+
 				if (writeServiceCommand(slot124Message.cv, slot124Message.cvData, doRead, false, false, &callbackLocoNet)) {
 					//read requested, E7 response is via an asynchronous callback
 					queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
 				}
 				else {
-					//programmer is busy
+					//some other error, e.g. not in service mode or sm is busy
 					queueMessage("RECEIVE 0xB4 0x7F 0x00 0x34\n", client);  //LACK and busy
 				}
 				return;
@@ -470,43 +492,8 @@ I see a string of BB and B0 initially
 				//E7 response...here
 				/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>*/
 
-				std::string m;
-				m.append("RECEIVE E7 0E 7C ");
-				uint8_t checksum = 0xFF ^ 0xE7 ^ 0x0E ^ 0x7C;
-				
-				snprintf(buf, 5, "%02X ", slot124Message.PCMD);
-				m.append(buf);
-				checksum ^= slot124Message.PCMD;
-				m.append("00 "); //PSTAT, lets pretend no errors
-				//HOPSA is 6 msb of an 11 bit address, LOPSA is 7 lsb of address, .
-				snprintf(buf, 5, "%02X ", slot124Message.address >> 7);
-				m.append(buf);
-				checksum ^= (slot124Message.address >> 7);
-				snprintf(buf, 5, "%02X ", slot124Message.address & 0x7F);
-				m.append(buf);
-				checksum ^= (slot124Message.address & 0x7F);
-				//TRK is 0b101 for now, <1,0> are estop, power-on
-				uint8_t trk = 0b100;
-				trk += power.trackPower ? 1 : 0;
-				snprintf(buf, 5, "%02X ", trk);
-				m.append(buf);
-				checksum ^= trk;
-				//CVH is  <0,0,CV9,CV8 - 0,0, D7,CV7>
-				uint8_t cvh = (slot124Message.cv >> 7);  //preserve <cv9,8,7> as lsb
-				cvh = cvh << 3; //<cv 9,8,7 0 0 0>
-				cvh += (cvh & 0b1000) == 0 ? 0 : 1;  //copy cv7 to 0 bit posn
-				cvh &= 0b00110001; //clear bits 3,2,1
-				cvh += (slot124Message.cvData & 0x80) == 0 ? 0 : 1;//add in D7 databit
-				snprintf(buf, 5, "%02X ", cvh);
-				m.append(buf);
-				checksum ^= cvh;
-				snprintf(buf, 5, "%02X ", slot124Message.cv & 0x7F);
-				m.append(buf);
-				checksum ^= (slot124Message.cv & 0x7F);
-				snprintf(buf, 5, "00 00 %02X ", checksum);
-				m.append(buf);
-				
-				queueMessage(m, client);
+				writeProgrammerTaskFinalReply();
+								
 				return;
 			}
 
@@ -516,130 +503,17 @@ I see a string of BB and B0 initially
 			//END REWRITE
 
 
-			//old code, this will never execute
-
-			if ((tokens[3] & 0b01000000) == 0) {
-				//READ operation.
-				
-				switch (tokens[3] & 0b00111100) {
-				case 0b00101000: //direct, SM, byte
-				case 0b00101100: //ops byte with ACK
-				case 0b00100100: //ops byte with no-ACK
-					//read. enter service mode
-					writeServiceCommand(0, 0, true, true, false, nullptr);
-					break;
-				default:
-					//operation not supported
-					queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
-					return;
-				}
-
-				if (writeServiceCommand(slot124Message.cv, slot124Message.cvData, true, false, false, &callbackLocoNet)) {
-					//initiate the read
-					queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
-
-				}
-				else {
-					//programmer is busy
-					queueMessage("RECEIVE 0xB4 0x7F 0x00 0x34\n", client);  //LACK and will respond with E7
-				}
-				return;
-
-				/*
-				//spoof a response for now
-				tokens[0] = 0xE7;  //response code
-				//D7 is in <1> of CVH
-				tokens[8] |= 0b10;
-				tokens[10] = 0b1000; //D6-0, we spoof 0x88 as a response
-				tokens[4] = 0; //PSTAT
-				tokens[11] = 0;
-				tokens[12] = 0;
-
-
-				m.clear();
-				m.append("RECEIVE ");
-
-				uint8_t checkSum = 0xFF;
-
-				for (int i = 0;i < 13;i++) {
-					snprintf(buf, 5, "%02X ", tokens[i]);
-					m.append(buf);
-					checkSum ^= tokens[i];
-				}
-				snprintf(buf, 5, "%02X\n", checkSum);
-				m.append(buf);
-				queueMessage(m, client);
-				return;
-				*/
-			
-			}
-			else {
-				//WRITE operation
-				queueMessage("RECEIVE 0xB4 0x7F 0x40 0x74\n", client);  //LACK blind accept no response
-
-				//we should NOT have to send an E7 message, but DP seems to expect one.  In fact it expects to see PSTAT=0 meaning there was ACK from the decoder
-				//which means I need to fix up the SM routine to support looking for ACK.
-				//spoof a response for now
-				tokens[0] = 0xE7;  //response code
-				tokens[4] = 0; //PSTAT, pretend all is well=0, 0b10 = no ACK seen from decoder. 0b1 no decoder on track, though how you tell this apart from no ACK...
-				tokens[11] = 0;
-				tokens[12] = 0;
-
-
-				m.clear();
-				m.append("RECEIVE ");
-
-				uint8_t checkSum = 0xFF;
-
-				for (int i = 0;i < 13;i++) {
-					snprintf(buf, 5, "%02X ", tokens[i]);
-					m.append(buf);
-					checkSum ^= tokens[i];
-				}
-				snprintf(buf, 5, "%02X\n", checkSum);
-				m.append(buf);
-				queueMessage(m, client);
-
-
-
-				return;
-			}
-
-			return;
 			//do not execute next block
 
 
 
-
-
-
-
-
-
-
-
-			/*The programmer track is accessed as Special slot #124 ( $7C, 0x7C).  It is a full asynchronous shared system resource.
-			To start Programmer task, write to slot 124 (0x7C). There will be an immediate LACK acknowledge that
-			indicates what programming will be allowed. If a valid programming task is started, then at the final
-			(asynchronous) programming completion, a Slot read <E7> from slot 124 will be sent.  This is the final
-			task status reply
-
-			 This OPC leads to immediate LACK codes:
-				<B4>,<7F>,<7F>,<0x4B>  Function NOT implemented, no reply.
-				<B4>,<7F>,<0>,<0x34> Programmer BUSY , task aborted, no reply.
-				<B4>,<7F>,<1>,<0x35> Task accepted , <E7> reply at completion.
-				<B4>,<7F>,<0x40>,<0x74> Task accepted blind NO <E7> reply at completion.
-
-			Any Slot RD from the master will also contain the Programmer Busy status in bit 3 of the <TRK> byte.
-			OK - so i need to link this into the SM and POM state engines
+			/*OK - so i need to link this into the SM and POM state engines
 			*/
 
 			//programming mode on slot 124.  The LocoNet spec does not support reading values on the Main (i.e. TY0/1 do not allow for this). Bummer.
 
 			//debug respond with LACK B4 7F 01 35  Task accepted , <E7> reply at completion.
 			//or LACK B4 7F 40 74
-			queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);
-			//queueMessage("RECEIVE 0xB4 0x7F 0x40 0x74\n", client);
 
 			/*incoming task message is
 			* <0xEF>,<0E>,<7C>,<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
@@ -650,68 +524,6 @@ I see a string of BB and B0 initially
 			* this danger would also exist before you entered SM.  i.e. enter it first, then put untested loco on the track
 			* 
 			* 
-			*/
-
-			//enter service mode if we have not done so already.  The only way to exit SM is to cycle track power
-			//if (!power.serviceMode) writeServiceCommand(0, 0, false, true, false);
-			
-			//what kind of request do we have?
-			//NOTE: we have to echo most of the inbound prog bytes, but do this asynchonously.  will need a callback from the SM routine in DCCcore.
-			//NOTE2: if there is a current trip, all we can do is set trackpower=off.  Loconet does not provide a means to flag the cause as a trip nor indicate what
-			//the trip current level was.
-			
-			//DEBuG, just echo that we have read a CV value
-			//D6 of PCMD is write/nRead so for reads we will return 0x88 = 0b1000 1000
-			if ((tokens[3] & 0b01000000) == 0) {
-				//read
-				Serial.println("SMr");
-
-				tokens[0] = 0xE7;  //response code
-				//D7 is in <1> of CVH
-				tokens[8] |= 0b10;
-				tokens[10] = 0b1000; //D6-0
-				tokens[4] = 0; //PSTAT
-				tokens[11] = 0;
-				tokens[12] = 0;
-
-
-				m.clear();
-				m.append("RECEIVE ");
-
-			uint8_t checkSum = 0xFF;
-			
-			for (int i = 0;i < 13;i++) {
-				snprintf(buf, 5, "%02X ",tokens[i]);
-				m.append(buf);
-				checkSum ^= tokens[i];
-			}
-			snprintf(buf, 5, "%02X\n", checkSum);
-			m.append(buf);
-			queueMessage(m, client);
-
-			}
-
-			/*PROBLEM
-			* L: EF 0E 7C 2B 00 00 00 00 00 69 00 7F 7F 20
-
-			SMr
-			Out RECEIVE EF 0E 7C 2B 00 00 00 00 00 69 00 7F 7F 20  0x2b=001 01 0  11  byte read, direct read, SM
-
-			SENT OK
-			RECEIVE 0xB4 0x7F 0x01 0x35
-			RECEIVE EF 0E 7C 2B 00 00 00 00 02 69 08 7F 7F 2A
-
-			DP says timeout error talking to programmer, even though it sends the correct messages back...
-			unless maybe it expects those two 0x7Fs to be zero.
-			
-			
-			NOPE; still get a timeout.  makes no sense, the Master is responding.
-			* <0xEF>,<0E>,<7C>,<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
-			Out RECEIVE EF 0E 7C 2B 00 00 00 00 00 00 03 7F 7F 4A  this is cv1, expected value 3
-			SENT OK
-			RECEIVE 0xB4 0x7F 0x01 0x35
-			RECEIVE EF 0E 7C 2B 00 00 00 00 02 00 08 00 00 43
-
 
 			Try a mainline read. You cannot, DP has greyed out the read.
 			https://loconetovertcp.sourceforge.net/Protocol/SD_blocking_request.svg
@@ -727,40 +539,88 @@ I see a string of BB and B0 initially
 			https://www.jmri.org/help/en/html/hardware/loconet/LocoNetSim.shtml
 
 			*/
-
-
-
-
-
-
-
-			//usage reg,val,read,enterSM,exitSM
-			//writeServiceCommand(0, 0, false, true, false);
-
-			//so we must always send a LACK to every request to indicate we are processing it
-			//and then we asynchronously return the data
-
-
-			/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
-			
-			*/
-
-
-
-
-
-		}
+		
+		}  //END 0x7C block.
 
 		return;
 	
-
- 
-
 
 	}
 
 
 }
+
+
+/// <summary>
+/// Writes an <E7> response back to the client which initiated the programmer operation
+/// </summary>
+void nsLOCONETprocessor::writeProgrammerTaskFinalReply(void) {
+	/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>*/
+	if (slot124Message.client == nullptr) return;
+	char buf[5];
+	std::string m;
+	m.append("RECEIVE E7 0E 7C ");
+	uint8_t checksum = 0xFF ^ 0xE7 ^ 0x0E ^ 0x7C;
+
+	snprintf(buf, 5, "%02X ", slot124Message.PCMD);
+	m.append(buf);
+	checksum ^= slot124Message.PCMD;
+	snprintf(buf, 5, "%02X ", slot124Message.PSTAT);
+	m.append(buf);
+	checksum ^= slot124Message.PSTAT;
+	//HOPSA is 6 msb of an 11 bit address, LOPSA is 7 lsb of address, .
+	snprintf(buf, 5, "%02X ", slot124Message.address >> 7);
+	m.append(buf);
+	checksum ^= (slot124Message.address >> 7);
+	snprintf(buf, 5, "%02X ", slot124Message.address & 0x7F);
+	m.append(buf);
+	checksum ^= (slot124Message.address & 0x7F);
+	//TRK is 0b101 for now, <1,0> are estop, power-on
+	uint8_t trk = 0b100;
+	trk += power.trackPower ? 1 : 0;
+	snprintf(buf, 5, "%02X ", trk);
+	m.append(buf);
+	checksum ^= trk;
+	//CVH is  <0,0,CV9,CV8 - 0,0, D7,CV7>
+	uint8_t cvh = (slot124Message.cv >> 7);  //preserve <cv9,8,7> as lsb
+	cvh = cvh << 3; //<cv 9,8,7 0 0 0>
+	cvh += (cvh & 0b1000) == 0 ? 0 : 1;  //copy cv7 to 0 bit posn
+	cvh &= 0b00110001; //clear bits 3,2,1
+	cvh += (slot124Message.cvData & 0x80) == 0 ? 0 : 1;//add in D7 databit
+	snprintf(buf, 5, "%02X ", cvh);
+	m.append(buf);
+	checksum ^= cvh;
+	snprintf(buf, 5, "%02X ", slot124Message.cv & 0x7F);  //<CVL>
+	m.append(buf);
+	checksum ^= (slot124Message.cv & 0x7F);
+	snprintf(buf, 5, "%02X ", slot124Message.cvData & 0x7F);  //<DATA7>
+	m.append(buf);
+	checksum ^= (slot124Message.cvData & 0x7F);
+	m.append("00 00 ");
+	snprintf(buf, 5, "%02X ", checksum);
+	m.append(buf);
+	queueMessage(m, slot124Message.client);
+}
+
+/*
+}FANTASTIC 43SM RD
+wPTFR
+
+RECEIVE EF 0E 7C 2B 00 00 00 00 00 1C 06 7F 7F 53
+RECEIVE 0xB4 0x7F 0x01 0x35
+RECEIVE E7 0E 7C 2B 00 00 00 05 00 1C 00 00 58  only 13 bytes!
+<0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
+*/
+
+
+
+
+
+
+
+
+
+
 
 /// <summary>
 /// handles callbacks from DCCcore relating to Service Mode and POM. Does not support bit manipulation.
@@ -769,36 +629,46 @@ I see a string of BB and B0 initially
 /// <param name="cvReg">cv register</param>
 /// <param name="cvVal">cv data</param>
 void nsLOCONETprocessor::callbackLocoNet(bool ack, uint16_t cvReg, uint8_t cvVal) {
-	Serial.println("FANTASTIC");
+	Serial.printf("FANTASTIC %d",slot124Message.PCMD);
 	/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
-	PSTAT is <7-4> reserved <3> user abort <2> failed read (no ACK) <1> no write ACK <0> no loco
+	PSTAT is <7-4> reserved <3> user abort <2> failed read (no ACK) <1> no write ACK response<0> no loco
+	PCMD was <7>=0 <6>wr/rd <5>byte/bit <4,3>ty1,2 <2>ops/sm <1,0> reserved
 	*/
 	std::string m;
-	uint8_t PSTAT;
-	uint8_t checksum=0xFF;
-	//SM, for read and write we expect ACK
-	//POM, if ACK was demanded we need to confirm if we saw it
+	//uint8_t PSTAT;
 	
+	//we see PCMD = d43 =0x2b = 0010 1011. 
+	//[EF 0E 7C 2B 00 00 00 00 00 00 03 7F 7F 4A]  Byte Read in Direct Mode on Service Track: CV1.
+
 	if ((slot124Message.PCMD & 0b00100) == 0) {
-		//POM, if client expects ACK we need to confirm we saw it. TY=00 is no act TY=01 expect ACK
+		//Service Mode. For read and write we expect ACK
+		Serial.println("SM RD");
+		if ((slot124Message.PCMD & 0b1000000) == 0) {
+			//SM read
+			//PSTAT += ack ? 0: 0b100;
 
-		//better to mask the 5 bits in and then do specific test
+			//2025-12-16 lets pretend read was good, and the answer was 42
+			slot124Message.PSTAT = 0;
+			slot124Message.cvData = 42;
+			writeProgrammerTaskFinalReply();
 
-	}
-	else if (true) {
-	
-	
-	}
-	else {
-		//SM
-		if ((slot124Message.PCMD & 0b100000) == 0) {
-			//read
-			PSTAT += ack ? 0: 0b100;
 		}
 		else {
-		//write
-			PSTAT += ack ? 0:0b10;
+			Serial.println("SM WR");
+			//SM write
+				//PSTAT += ack ? 0:0b10;
+				//2025-12-16 lets pretend write was good, and we saw ACK
+			slot124Message.PSTAT = 0;
+			writeProgrammerTaskFinalReply();
+
 		}
+	}
+	else {
+		//POM. If client expects ACK we need to confirm we saw it. TY=00 is no act TY=01 expect ACK
+		//better to mask the 5 bits in and then do specific test
+
+
+		
 	}
 
 	

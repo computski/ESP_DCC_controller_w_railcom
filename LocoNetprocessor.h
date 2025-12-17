@@ -78,7 +78,7 @@ namespace nsLOCONETprocessor {
 	static std::string echoRequest(std::vector<std::uint8_t> tokens);	
 	static void writeDIRF_SPD(uint8_t* dirf, uint8_t* spd, void* loc);
 	static void* getSytemSlotPtr(uint8_t locoNetSlot);
-
+	static void writeProgrammerTaskFinalReply(void);
 }
 
 

@@ -223,7 +223,7 @@ void replicateAcrossConsist(int8_t slot);
 void dccPutSettings();
 bool writePOMcommand(const char* address, uint16_t cv, const char* val);
 bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM, bool exitSM,void(*callback)(bool,uint16_t,uint8_t));  //abc
-
+bool ServiceModeBusy(void);
 
 float getVolt();  //debug
 void railcomCallback(uint8_t result, bool success);
