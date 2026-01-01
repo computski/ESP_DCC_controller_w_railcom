@@ -875,7 +875,7 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 		out["type"] = "dccUI";
 		out["cmd"] = "pom";
 		out["action"] = "ok";
-		out["success"]= writePOMcommand(address, cv_reg, cv_val);
+		out["success"]= writePOMcommand(address, cv_reg, cv_val,nullptr);
 		sendJson(out);
 	}
 

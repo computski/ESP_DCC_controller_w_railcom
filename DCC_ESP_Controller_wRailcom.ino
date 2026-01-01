@@ -1,6 +1,6 @@
 /*
 	Name:       ESP_DCC_Controller.ino
-	updated:	2025-01-11
+	updated:	2025-12-18
 	Author:     Julian Ossowski
 	Target:		WeMOS D1 (R1 or mini)
 	Note:		This device is 4M flash with 1M spiffs. The spiffs hold the webserver files
@@ -30,8 +30,7 @@
 
 
 
-#include "LocoNetprocessor.h"
-#include "DCCEXprocessor.h"
+#include "LocoNetprocessor.h"  //added 2025-12
 #include <splash.h>
 #include <Adafruit_SSD1306.h> //added 2024-11-26 for latest adafruit INA support
 #include <Adafruit_NeoPixel.h> //added 2024-11-26 for latest adafruit INA support

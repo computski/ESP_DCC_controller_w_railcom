@@ -34,9 +34,6 @@
     <ClCompile Include="Keypad.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="DCCEXprocessor.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="LocoNetprocessor.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -67,9 +64,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Keypad.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="DCCEXprocessor.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="LocoNetprocessor.h">

@@ -27,10 +27,20 @@ The hardware (blue PCB) needs a mod using a 2k2 resistor to pull the D8 pin (PIN
 insufficient to pull down against the WPU in the 6N137 Opto, and this causes boot to fail as the pin must be low at boot.  2k2 directly to ground fixes this, but it does require
 an active totem drive to overcome this 2k2.
 
-If we want to use the pin as PIN_RAILCOM_SYNC_INPUT then we will need to have D8 drive a 2k2 base resistor into a NPN which will pull the Opto enable pin to ground.  We then drive
+If we want to use the pin as PIN_RAILCOM_SYNC_INPUT then we need to have D8 drive a 2k2 base resistor into a NPN which will pull the Opto enable pin to ground.  We then drive
 D8 with inverse logic, i.e. it is high during the railcom blanking period, and low during the railcom cutout.  It become a WPD (12k) input at DCC_CUTOUT_END when it is read and
 DCCpacket.pinSyncInputTriggered is set if we see active hi, and must be cleared in some other processing routine.
 The pushbutton must pull D8 to 3v3 via a 680R resistor.  This is because D8 is active low during the railcom cutout.
+
+railcomLoop() must be called every program loop. Due to the bloated arduino stack, we cannot guarantee that the serial data captured by the hardware based serial decoder will be
+available at the end of the railcom cutout period, and in any event, a POM read command in DCC may require a varying number of railcom cutouts following the specific loco addressed, 
+before the decoder emits data.  In principle we can look for a railcom ACK message, post POM-write, but the calls from DCCcore do not support this at present.  Additionally, it is not
+possible to indentify whether the data appeared in Channel 1 or Channel 2.  This is because it is not possible to monitor hardware-serial events in real time.  
+Channel 1 is always a 12 bit datagram, and is a broadcast channel.  We don't use it.  Channel 2 will only contain data related to the decoder whose address was sent in the DCC packet
+preceeding that railcom cutout.   DCClayer1 will call railcomCallback() in DCCcore after a POM read
+Note: as 12 bit datagram will contain a single 8 bit response value as well as an ID0 marker.
+
+BUG: POM read sometimes reads zero. this is not a timeout. it means the decoded serial buffer contained two bytes forming a valid 12 bit datagram.
 
 */
 
@@ -132,16 +142,20 @@ volatile uint8_t  TXbyteCount;
 volatile uint8_t  TXbitCount = 32;
 
 
-//Railcom 4/8 decode table
+//S-9.3.2 table 2: Railcom 4/8 decode table. The last 3 entries are NACK, ACK and BUSY
+//BUSY potentially might be encountered on reads before the read value appears
+//BUSY, ACK, NACK will appear in response to a POM write.  ACK means the command was received, not that the data was actually written.
 const uint8_t railcomTable[] = {
 0b10101100,0b10101010,0b10101001,0b10100101,0b10100011,0b10100110,0b10011100,0b10011010,0b10011001,0b10010101,0b10010011,0b10010110,0b10001110,0b10001101,0b10001011,0b10110001,
 0b10110010,0b10110100,0b10111000,0b01110100,0b01110010,0b01101100,0b01101010,0b01101001,0b01100101,0b01100011,0b01100110,0b01011100,0b01011010,0b01011001,0b01010101,0b01010011,
 0b01010110,0b01001110,0b01001101,0b01001011,0b01000111,0b01110001,0b11101000,0b11100100,0b11100010,0b11010001,0b11001001,0b11000101,0b11011000,0b11010100,0b11010010,0b11001010,
 0b11000110,0b11001100,0b01111000,0b00010111,0b00011011,0b00011101,0b00011110,0b00101110,0b00110110,0b00111010,0b00100111,0b00101011,0b00101101,0b00110101,0b00111001,0b00110011,
-0b00001111,0b11110000,0b11100001 };
-#define RC_NACK 0x40
-#define RC_ACK 0x41
-#define RC_BUSY 0x42
+0b00001111,0b11110000,0b11100001};
+#define RAILCOMTABLELENGTH	67
+
+//#define RC_NACK 0x40
+//#define RC_ACK 0x41
+//#define RC_BUSY 0x42
 
 
 uint8_t _rcstate;
@@ -545,9 +559,17 @@ void railcomInit() {
 }
 
 /// <summary>
-/// Call once per program loop
+/// Call once per program loop, reads any railcom data that has accumulated in the hardware-serial buffer.
+/// This process is asynchronous to the actual railcom cutout that initiated the railcom read, because
+/// the arduino stack is too bloated to ensure a serial read output by the end of the railcom cutout.
 /// </summary>
 void railcomLoop(void) {
+//2025-12-29 note: this code expects to find ID0 with 2msb of a 8 bit data result. if it sees ID0 it expects 1 more byte, even though 4 bytes total are possible with ID0.
+//for 12 bit datagrams, the payload is IIIIbb bbbbbb, where IIII is the ID which is 0 to 15 (i.e. 4 bits).  see table 4 ID[3-0]D[7-6]+D[5-0] i.e. 4 bits ID with bits <7,6> of data
+//followed by <5-0> data.  Its possible that a 3rd 6-bit datagram follows, being ACK, NACK or BUSY
+
+//2025-12-29 I sometimes see spurious zero reads.  This is only possible if dual zero bytes are present in the serial buffer
+
 
 
 #ifdef PIN_RAILCOM_SYNC_TOTEM
@@ -587,7 +609,8 @@ void railcomLoop(void) {
 			if (decodeRailcom(&byteNew, true)) {
 				if ((byteNew & 0b00111100) == 0) {
 					//found ID0
-					_payload = byteNew << 6;
+					//2025-12-29 what, how?  why AND with 0x3C?
+					_payload = byteNew << 6;  //two lsb become two msb
 					_rcstate = RC_EXPECT_BYTE;
 					break;
 				}
@@ -622,17 +645,21 @@ void railcomLoop(void) {
 
 
 /// <summary>
-/// Reset railcom reader, and look for incoming data for locoIndex
+/// Reset railcom reader, the params are ignored.
 /// </summary>
-/// <param name="locoIndex"></param>
+/// <param name="address">ignored</param>
+/// <param name="useLongAddr">ignored</param>
+/// <param name="reg">ignored</param>
 void railcomRead(uint16_t address, bool useLongAddr, uint8_t reg) {
 #ifdef DEBUG_RC
 	return;
 #endif 
+	//S-9.3.2 section 3.1
 	_rcstate = RC_EXPECT_ID0;
 	DCCpacket.railcomPacketCount = 80;
 }
 
+/*
 /// <summary>
 /// decode inbound data against the 4/8 decode table
 /// </summary>
@@ -653,6 +680,7 @@ bool decodeRailcom(uint8_t inByte, uint8_t* dataOut, bool ignoreControlChars) {
 	*dataOut = 0;
 	return false;
 }
+*/
 
 /// <summary>
 /// decode inbound data against the 4/8 decode table, overwriting inByte with its decoded value
@@ -661,18 +689,18 @@ bool decodeRailcom(uint8_t inByte, uint8_t* dataOut, bool ignoreControlChars) {
 /// <param name="ignoreControlChars">ignore ACK, NACK, BUSY and only return data values</param>
 /// <returns>true if decode successful</returns>
 bool decodeRailcom(uint8_t* inByte, bool ignoreControlChars) {
-	for (int i = 0; i <= RC_BUSY; i++) {
+	
+	for (int i = 0; i < RAILCOMTABLELENGTH; i++) {
 		if (*inByte == railcomTable[i]) {
-			//valid
+			//valid, but is it a control char (the last 3 entries in the table)
+			if (ignoreControlChars && (i >= 0x3F)) return false;
 			*inByte = i;
 			return true;
 		}
-		if (ignoreControlChars && (i >= 0x3F)) return false;
+		
 	}
 	//didn't find a match
-
 	return false;
-
 }
 
 

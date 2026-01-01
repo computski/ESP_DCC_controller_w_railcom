@@ -5,76 +5,74 @@
 #include "LocoNetprocessor.h"
 #include "Global.h"
 #include "DCCcore.h"
+#include "WiThrottle.h"  //for debug over tcp
 
 /*TO DO
 * loss of loconet client should cause all slots to go to zero speed, and and Status to Common.
-
-
-servic mode  - initiate write
-L: EF 0E 7C 6B 00 00 00 00 00 00 03 7F 7F 0A
-Out RECEIVE EF 0E 7C 6B 00 00 00 00 00 00 03 7F 7F 0A
-
-POM - initiate
-L: EF 0E 7C 6B 00 00 00 00 00 00 03 7F 7F 0A
-Out RECEIVE EF 0E 7C 6B 00 00 00 00 00 00 03 7F 7F 0A
- <0xEF>,<0E>,<7C>,<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
-
- Service mode - initiate read, note that JMRI won't send anything if you ask to read when POM
- diffrence is PCMD is 2B = 0010 1011
- L: EF 0E 7C 2B 00 00 00 00 00 00 03 7F 7F 4A
-
- I had expected differing PCMD. 0x6B=0110 1011
- D7-0
- D6 1=w 0 =r
- D5 1= byte mode, 0=bit
- D4 ty1
- D3 ty 0
- D2 1 =ops on mainlines, 0=prog track
- D1 =res
- D0 =res
-
- EF 0E 7C 6B 00 00 00 00 00 1C 06 7F 7F 13   - this is a ready from CV29 (i.e. 1C=128d coded)
-
-
-
+*
+* broadcast messages?  There is NO need to send broadcasts from LocoNet because this is required for multi-throttles, and this is handled by DP.
+* 
+* 
+* Notes on DP.
+* you can use DP to host a throttle controller.  this allows you to use ED and also open throttles on the laptop.  Note though, that on ED, if you select a loco from the server roster
+* it will not display any function buttons.  This is a bug in DP, where it fails to send details of available functions to ED.  You will find that if instead you select a loco address
+* directly by entering it into ED, then all the functions will appear on the throttle.
+*
+*
+* debug approach.  The ESP is on .129 port 2560.  I can connect to this with Hercules TCP client.  If we then send to 'all clients' as ASCII debug this should work.
+* 
+* POM, I need to reprogram this to expect NACK, ACK, BUSY via a callback.  These are only expected if a callback routine has been set.
 */
 
 
 
-/*LocoNet
-* 
-Note: Decoder Pro (DP) does not see to recognise it has lost TCP connection and does not attempt a re-initialise of LocoNet.  You have to manually restart DP.
+/*LocoNet support 2025-12
+ 
+Note: JRMI Decoder Pro (DP) does not seem to recognise it has lost the TCP connection and does not attempt a re-initialise of LocoNet.  You have to manually restart DP.
 
-DP does not seem to do anything with the data i am transmitting to it.  It transmits SEND 00 11 etc which is not to spec (no mention of send) so maybe its expecting
-some preface word to the returning hex?
-https://loconetovertcp.sourceforge.net/Protocol/LoconetOverTcp.html  yeah
+The base protocol for loconet is found in the loconet personal edition https://www.digitrax.com/support/loconet/loconetpersonaledition.pdf
+JRMI DP uses loconet over TCP which has additional message prefixes https://loconetovertcp.sourceforge.net/Protocol/LoconetOverTcp.html
+in short, you first echo the command then transmit SENT OK and then transmit your response. https://loconetovertcp.sourceforge.net/Protocol/SD_blocking_request.svg
+Useful glossary from digitrax https://www.digitrax.com/tsd/glossary/c/
 
-this says you first echo the command then transmit SENT OK then
-transmit your response.  Yup, now I am seeing stuff in the Monitor LocoNet window
+The protocol has a series of system memory 'slots' these are not loco addresses.  slot 124 is a special slot to control programming
+A slot is set up to hold a loco and then commands are sent to that slot and the controller will repeately transmit the slot content to the track
+This is pretty much how my original project works anyway, with the Loco[] array.
 
-https://loconetovertcp.sourceforge.net/Protocol/SD_blocking_request.svg
-https://digi100.synology.me/Startseite.html
+IMPORTANT: this ESP project was originally designed as a stand-alone DCC control and implements a WiThrottle server.  If you link this controller to DP over LocoNetoverTCP then
+the laptop needs to run the WiThrottle server and it in turn will issue slot commands over loconet to the controller which will transmit to the track.  i.e. Engine Driver now connects to 
+the laptop and not to the ESP.
 
-https://www.digitrax.com/tsd/glossary/c/
-Note on InUse.
-loco slots don't have a flag for this
-WiT throttles are associated with a locoSlot and manage steal on this basis.
-Loconet-TCP is effectively another throttle to WiT but it might control multiple loco slots.  I think the easiest way to control this is add
-a flag to the loco struct
+This module uses the existing ESP WiThrottle port to monitor for incoming LocoNet messages.  It recognises the incoming messages as loconet and changes the handler that
+receives them to direct the messages to the LocoNetprocesssor.  This routine also makes calls to DCC core for programmer support, and asynchronous callbacks are made from DCC core
+to this module to handle incoming ACK pulses/ Service Mode read/writes as well as those for Program on Main.
 
-Note: i am not sure if HUI changes to a slot speed will be reflected back to loconet and be picked up by the WiT hanging off the JMRI server.  YES it is
+Note that DP does not support reading cvs on the main, even though notionally the DP GUI appears to support this, you will find the app refuses to process such requests and so no
+commands are sent over loconet to this module.
 
-Note: locoNet locos are in slots 1-127, so we need to offset by one to make use of loco[].  Slot 0 is used for dispatch which we don't need.
+LocoNet locos are in slots 1-127, so we need to offset by one to make use of the loco[] array.  Slot 0 is used for dispatch which we don't need.
 to release a loco, locoNet writes 0x13 to STATUS1. 0b0001 0011. loco not consisted and common.
 
-Note: using locoNet will overwrite the roster that is stored in the ESP-DCC.
+Using locoNet will overwrite the roster that is stored in the ESP-DCC.  The roster itself is managed in DP, no longer stored on the ESP.  The ESP will restore its locally stored roster on boot.
 
 Note: LocoNet asks for control of a loco address. If the Master responds that the loco is in use, then the client is supposed not to ask to use it!  JRMI seems to
 go ahead and flag that loco for inUse a second time.  Not true.  this is an aberration of ED.  e.g. ED asks for loco 464 and you see this executed on LocoNet.
 if you use ED to request 464 a second time then no loconet traffic is generated.  ED is just doubling the 464 loco within its own app.
 
-*/
+This system does not support DCCeX because I consider it an inferior protocol to LocoNet.
 
+Important: this module is an adjunct to WiThrottle.  In WiThrottle, there is a routine broadcastChanges() which is called regularly from the main loop.  This routine has a local 
+sendToClient() routine which addess messages to the outbound queue.
+
+Calls to write/read the prog track and to write/read POM result in an async callback to callbackLocoNet() this in turn generates a locoNet message to confirm the operation 
+was a success or not.  Note that DP does not define how to enter/exit Service Mode (prog track).  This code will enter SM if an SM command is received.  It will only exit SM if
+the track power is cycled, but this could be dangerous because say you have a mis wired decoder, you initialise SM then put the loco on the track.  it causes a trip and then you 
+exit SM.  This would put full power on the miswired decoder....well ok, but then how are we to exit SM?   Ditto track is not in SM mode until you send the first SM command, so a miswired
+decoder could detonate.  Perhaps the DP designers' assumption was the controller has a permanent SM output.
+
+Note: DP does not support POM-read via Railcom for entire pages of CVs, but it does support individual CV reads on POM under the CVs tab.
+
+*/
 
 
 
@@ -96,15 +94,12 @@ struct PROGDETAIL {
 
 static PROGDETAIL slot124Message;
 
-//static uint8_t PCMD;
-
-
 
 void nsLOCONETprocessor::handleLocoNet(void* arg, AsyncClient* client, void* data, size_t len) {
 	trace(Serial.printf("\nLOCOnet %s \n", client->remoteIP().toString().c_str());)
 
-		//malloc gives more efficient memory usage than a fixed buffer - remember to use free
-		char* buffer;
+	//malloc gives more efficient memory usage than a fixed buffer - remember to use free
+	char* buffer;
 	buffer = (char*)malloc(len + 1);
 	//incoming *data was void, need to cast to const char
 	strncpy(buffer, (const char*)data, len);
@@ -145,7 +140,7 @@ void nsLOCONETprocessor::handleLocoNet(void* arg, AsyncClient* client, void* dat
 /// Loconet token processor. The LocoNet over TCP protocol requries that every incoming loconet SEND XX YY message
 /// be echoed out as RECEIVE XX YY followed by SENT OK.  Then the processor can actually process the message content.
 /// </summary>
-/// <param name="msg">A single SEND message</param>
+/// <param name="msg">A single incoming SEND message</param>
 /// <param name="client">TCP client</param>
 void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 	//its easier to break on spaces using strtok and build a vector of ints
@@ -154,12 +149,11 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 	
 	LOCO* locoPtr=nullptr;  //pointer to the actual system loco slot (offset by 1 from LocoNet slot)
 	
-
 	std::vector<std::uint8_t> tokens;
 	#define BUFSIZE 25
 	char buf[BUFSIZE];
 
-	trace(Serial.printf("L: %s\r\n", msg);)
+	trace(Serial.printf("In: %s\r\n", msg);)
 	
 //Loconet over TCP requires that we echo the message prefixed by RECEIVE
 //and follow this with SENT OK
@@ -168,49 +162,25 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 	m.append(msg);
 	m.append("\nSENT OK\n");
 	
-
 	char* tokenSplit = strtok(msg, " ");
 	while (tokenSplit != NULL) {
-		tokens.push_back(strtoul(tokenSplit, nullptr, 16));
+		//tokens.push_back(strtoul(tokenSplit, nullptr, 16));
+		//emplace does not create copies of things and is more efficient
+		tokens.emplace_back(strtoul(tokenSplit, nullptr, 16));
 		tokenSplit = strtok(NULL, " ");
 	}
 
 	uint8_t checksum;
 	//XOR all tokens, should give 0xFF
-	for (auto t : tokens)
-	{
-		checksum ^= t;
-	}
-	if (checksum != 0xFF) { 
-		trace(Serial.printf("chk fail");)
-		//if checksum fails, ignore the message
-		return;
-	}
+	for (auto t : tokens) {	checksum ^= t;}
+
+	//if checksum fails, ignore the message
+	if (checksum != 0xFF) { return;	}
 	
 	queueMessage(m, client);
 	m.clear();
-
-	/*
-	SEND BB 79 01 3C
-	SEND BB 00 00 44
-
-	SEND B0 78 27 10
-SEND B0 79 27 11
-SEND B0 7A 27 12
-
-SEND BF 00 03 43
-
-SEND EF 0E 7C 23 00 00 00 00 00 1C 00 7F 7F 5D
-SEND 82 7D
-
-
-I see a string of BB and B0 initially
-
-
-	*/
-	
-	
-	//Two token messages
+			
+	//process TWO-TOKEN messages
 	if (tokens.size() == 2) {
 		switch (tokens[0]) {
 		case OPC_IDLE:
@@ -220,22 +190,23 @@ I see a string of BB and B0 initially
 			
 		case OPC_GPON:
 			power.trackPower = true;
-			Serial.println("ON");
+			nsWiThrottle::queueMessage("pwr on\n","DEBUG");
 			break;
 
 		case PC_GPOFF:
 			power.trackPower = false;
-			Serial.println("OFF");
+			nsWiThrottle::queueMessage("pwr off\n","DEBUG");
+			//exit service mode if we are in this
+			writeServiceCommand(0, 0, false, false, true, nullptr);
+			nsWiThrottle::queueMessage("exit sm\n", "DEBUG");
 		}
 		return;
 	}
 
-	//Four token messages
+	//FOUR-TOKEN messages
 	if (tokens.size() == 4) {
 
-		
 		switch (tokens[0]) {
-
 
 		case OPC_RQ_SL_DATA:
 			//request slot data/status block
@@ -247,8 +218,8 @@ I see a string of BB and B0 initially
 			/*Request loco address and status, if not found master puts address in a free slot.
 			The Wiki page contains an error, token[1] is ADR2 and token[2] ADR
 			The throttle must then examine the SLOT READ DATA bytes to work out how to process the Master response.
-			If the STATUS1 byte shows the SLOT to be COMMON, IDLE or NEW the throttle
-			may change the SLOT to IN_USE by performing a NULL MOVE instruction <BA>,<slotX>,<slotX>,<chk> on this SLOT.
+			If the STATUS1 byte shows the SLOT to be COMMON, IDLE or NEW the throttle may change
+			the SLOT to IN_USE by performing a NULL MOVE instruction <BA>,<slotX>,<slotX>,<chk> on this SLOT.
 			This activation mechanism is used to guarantee proper SLOT usage interlocking in a multi-user asynchronous environment.
 		*/
 
@@ -269,12 +240,12 @@ I see a string of BB and B0 initially
 			}
 			else {
 				//dealing with long address
-				//token[1] will be ADR2 <7+> msb and token[2] is ADR <0-6> lsb, but we need to decode these values back to 
+				//token[1] will be ADR2 <7+> msb and token[2] is ADR <0-6> lsb 
 				uint16_t addr = (tokens[1] << 7) + tokens[2];
 				snprintf(buf, BUFSIZE, "L%d", addr);
 			}
 
-			//find slot containing the loco.  LocoNet slots 0-120 are for locos.  We shall just use the index of our loco array
+			//find slot containing the loco.  LocoNet slots 1-120 are for locos.  Use the index of loco array + 1 as the loconet slot
 			int8_t systemSlot = findLoco(buf, nullptr, false);
 
 			if (systemSlot == -1) {
@@ -313,7 +284,6 @@ I see a string of BB and B0 initially
 		case OPC_SLOT_STAT1:
 			//[B5 01 13 58]  Write slot 1 with status value 19 (0x13) - Loco is Not Consisted, Common and operating in 128 speed step mode.
 			//typically this is how a loco is released
-				
 
 			locoPtr = (LOCO*)getSytemSlotPtr(tokens[1]);
 			if (locoPtr) {
@@ -364,33 +334,30 @@ I see a string of BB and B0 initially
 
 	}//end 4 token
 
-	//variable token messages
+	//VARIABLE-LENGTH token messages
 	switch (tokens[0]) {
 
 	case OPC_WR_SL_DATA:
-		//this is how the throttle sends messages to locos, 3 forms.  Response is OPC_LONG_ACK
-		//0xEF 0x0E SLOT# STAT1 ADR SPD DIRF TRK SS2 ADR2 SND ID1 ID2
-		//0xEF 0x0E 0x7C PCD 0 HOPSA LOPSA TRK CVH CVL DATA7 0 0
-		//0xEF 0x0E 0x7B fast clock stuff
+		//this is how the throttle sends messages to locos, 3 forms exist.  Response is OPC_LONG_ACK
+		//0xEF 0x0E SLOT# STAT1 ADR SPD DIRF TRK SS2 ADR2 SND ID1 ID2  regular speed command to loco
+		//0xEF 0x0E 0x7C PCD 0 HOPSA LOPSA TRK CVH CVL DATA7 0 0  programming command
+		//0xEF 0x0E 0x7B fast clock command
 
 		if ((tokens[2] != 0x7C) && (tokens[2] != 0x7B)) {
 			//write slot data form of command
-				//if ((tokens[2] < 1) || (tokens[2] > MAX_LOCO)) return;
-					//locoPtr = &loco[tokens[1] - 1];
 
 			locoPtr = (LOCO*)getSytemSlotPtr(tokens[1]);
 			if (!locoPtr) return;
 			locoPtr->LocoNetSTATUS1 = tokens[3];
-			//it seems odd that LocoNet wants to write to the loco address, when it previously had to request the slot whilst giving an address
-			//i.e. it makes no sense to change this address during this command
+			//the command contains the loco address, even though the slot was set up with this address. i.e. ignore the address
+			//the command contains a TRK byte, but there is a separate command to turn power on/off. i.e. ignore TRK
+						
 			writeDIRF_SPD(&tokens[6], &tokens[5], locoPtr);
-			//why would client write to TRK?   there is a separate command to turn power on/off
-
+			
 			//write to SND, i.e. F8-4
 			locoPtr->function &= 0xFFF0;
 			locoPtr->function |= (tokens[2] << 4);
 			locoPtr->functionFlag = true;
-
 			return;
 		}
 
@@ -402,6 +369,7 @@ I see a string of BB and B0 initially
 			(asynchronous) programming completion, a Slot read <E7> from slot 124 will be sent.This is the final
 			task status reply.
 
+		
 			This OPC leads to immediate LACK codes :
 			<B4>, <7F>, <7F>, <0x4B>  Function NOT implemented, no reply.
 			<B4>, <7F>, <0>, <0x34> Programmer BUSY, task aborted, no reply.
@@ -409,33 +377,18 @@ I see a string of BB and B0 initially
 			<B4>, <7F>, <0x40>, <0x74> Task accepted blind NO <E7> reply at completion.
 			Any Slot RD from the master will also contain the Programmer Busy status in bit 3 of the <TRK> byte.
 			*/
-					
 			
-			//2025-12-16 to do. Rethink.  if we want an SM operation, we first need to check that SM is not busy because we don't wish to
-			//overwrite slot124Message when one is still pending.  POM is a non-issue as it will never be 'busy' unless waiting for an ACK pulse.
-
-			
+										
 			slot124Message.client = client;
 
-			//* <0xEF>,<0E>,<7C>,<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
+			//*incoming task <0xEF>,<0E>,<7C>,<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
 			slot124Message.address = (tokens[5] << 7) + tokens[6];
-			slot124Message.cv = (tokens[8] >> 3) + (tokens[8] & 0b1); // CVH is <0,0,CV9,CV8 - 0,0, D7,CV7> that's whack
+			slot124Message.cv = (tokens[8] >> 3) + (tokens[8] & 0b1); // CVH is <0,0,CV9,CV8 - 0,0, D7,CV7> bonkers format
 			slot124Message.cv = (slot124Message.cv << 7) + tokens[9];
 			slot124Message.cvData = tokens[10]; //data7  
 			slot124Message.cvData += (tokens[8] & 0b10) == 0?0:0x80;//D7 from CVH
 			slot124Message.PCMD = tokens[3];
-
-
-			/*think again...
-			1. check we can handle, i.e. SM direct RW or OPS RW with/out ACK
-			2. if SM... do R/W
-			3. if POM... do R/W  in the case of no ACK, the callback routine ignores ACK-state and declares success.
-
-
-			2025-12-16 what if we try to do another prog cmd to soon?  it will get rejected but slot124Message and might overwrite the last valid slot124
-
-			*/
-			//START REWRITE
+									
 			bool doRead;
 			switch (tokens[3] & 0b00111100) {
 			case 0b00101000: //direct, SM, byte
@@ -453,14 +406,20 @@ I see a string of BB and B0 initially
 
 			if ((tokens[3] & 0b100) == 0){
 				//SERVICE MODE
-				if (ServiceModeBusy) {
+				//LocoNet encodes CV1 as a zero value in HOPSA LOPSA, we need to add 1 before calling writeServiceCommand
+
+				if (ServiceModeBusy()) {  //this is a function call to DCCcore
 					queueMessage("RECEIVE 0xB4 0x7F 0x00 0x34\n", client);  //LACK and busy
+					nsWiThrottle::queueMessage("busy\n", "DEBUG");
 					return;
 				}
 
-				if (writeServiceCommand(slot124Message.cv, slot124Message.cvData, doRead, false, false, &callbackLocoNet)) {
+				if (writeServiceCommand(slot124Message.cv+1, slot124Message.cvData, doRead, false, false, &callbackLocoNet)) {
 					//read requested, E7 response is via an asynchronous callback
 					queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
+					
+					snprintf(buf, BUFSIZ, "cv %d\n", slot124Message.cv+1);
+					nsWiThrottle::queueMessage(buf, "DEBUG");
 				}
 				else {
 					//some other error, e.g. not in service mode or sm is busy
@@ -471,6 +430,8 @@ I see a string of BB and B0 initially
 			}
 			else
 			{//POM MODE
+				nsWiThrottle::queueMessage("wsc pom\n","DEBUG");
+
 				char addr[8];   //A123 L8000 S3
 				char cvVal[8];  //B8 R8 is byte write-8 read-8. S and C used for set and clear a bit
 				snprintf(addr, sizeof(addr), "%s%d", "a", 5);
@@ -481,13 +442,16 @@ I see a string of BB and B0 initially
 				if (doRead) {snprintf(cvVal, sizeof(cvVal), "R%d", slot124Message.cvData);}
 				else { snprintf(cvVal, sizeof(cvVal), "W%d", slot124Message.cvData); }
 
-				writePOMcommand(addr, slot124Message.cv, cvVal);
+				writePOMcommand(addr, slot124Message.cv, cvVal,nullptr);
 				//writing a POM command is just a matter of queuing a command in the DCC output buffer, there is no 'busy' to contend with
 				//if JMRI is not expecting ACK then possibly we could respond here with LACK-accept-blind, but I need to test how DP behaves
 				queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
 
-//if we are expecting ACK then this comes asynchonously via railcom and needs a callback to a handler in this namespace
+				//if we are expecting ACK then this comes asynchonously via railcom and needs a callback to a handler in this namespace
 				//if not, we can just give the E7 response now
+				//2025-12-29 even though the DCC spec says ACK pulses are a valid POM response, no decoders I own generate an ACK pulse when sent a POM command.
+				//and the DCC spec does not have a means to demand an ACK pulse vs say a Railcom response for POM.
+				//S-9.3.2 para 5.1.2 states BUSY, NACK and ACK can be sent from the decoder.
 				
 				//E7 response...here
 				/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>*/
@@ -497,52 +461,12 @@ I see a string of BB and B0 initially
 				return;
 			}
 
-
-
 			return;
-			//END REWRITE
+			
 
-
-			//do not execute next block
-
-
-
-			/*OK - so i need to link this into the SM and POM state engines
-			*/
-
-			//programming mode on slot 124.  The LocoNet spec does not support reading values on the Main (i.e. TY0/1 do not allow for this). Bummer.
-
-			//debug respond with LACK B4 7F 01 35  Task accepted , <E7> reply at completion.
-			//or LACK B4 7F 40 74
-
-			/*incoming task message is
-			* <0xEF>,<0E>,<7C>,<PCMD>,<0>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
-			* i.e. same as returned data except PSTAT=0 and possibly hops lopsa are also zero if LocoNet think this is the prog track
-			* 
-			* TO DO.
-			* if we are not in SM then enter SM.  but how do we know to exit SM, because this could be dangerous if the loco was not configured correctly.  That said
-			* this danger would also exist before you entered SM.  i.e. enter it first, then put untested loco on the track
-			* 
-			* 
-
-			Try a mainline read. You cannot, DP has greyed out the read.
-			https://loconetovertcp.sourceforge.net/Protocol/SD_blocking_request.svg
-
-			Last gasp, lets not send the LACK message. makes not difference.  give up.  DP does not implement this correctly.
-			https://groups.io/g/jmriusers/topic/decoderpro_cannot_read_write/32973168
-
-			[EF 0E 7C 2B 00 00 00 00 00 00 7F 7F 7F 36]  Byte Read in Direct Mode on Service Track: CV1.  traffic monitor shows command to Master
-			[EF 0E 7C 2B 00 00 00 00 02 00 08 00 00 43]  Byte Read in Direct Mode on Service Track: CV1.  and the Master response, but DP says timeout.
-
-			https://www.jmri.org/help/en/html/hardware/loconet/DCS240.shtml
-
-			https://www.jmri.org/help/en/html/hardware/loconet/LocoNetSim.shtml
-
-			*/
-		
 		}  //END 0x7C block.
 
-		return;
+	return;
 	
 
 	}
@@ -552,7 +476,7 @@ I see a string of BB and B0 initially
 
 
 /// <summary>
-/// Writes an <E7> response back to the client which initiated the programmer operation
+/// Writes an <E7> response back to Loconet client which initiated the programmer operation
 /// </summary>
 void nsLOCONETprocessor::writeProgrammerTaskFinalReply(void) {
 	/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>*/
@@ -581,6 +505,7 @@ void nsLOCONETprocessor::writeProgrammerTaskFinalReply(void) {
 	snprintf(buf, 5, "%02X ", trk);
 	m.append(buf);
 	checksum ^= trk;
+
 	//CVH is  <0,0,CV9,CV8 - 0,0, D7,CV7>
 	uint8_t cvh = (slot124Message.cv >> 7);  //preserve <cv9,8,7> as lsb
 	cvh = cvh << 3; //<cv 9,8,7 0 0 0>
@@ -590,6 +515,7 @@ void nsLOCONETprocessor::writeProgrammerTaskFinalReply(void) {
 	snprintf(buf, 5, "%02X ", cvh);
 	m.append(buf);
 	checksum ^= cvh;
+	
 	snprintf(buf, 5, "%02X ", slot124Message.cv & 0x7F);  //<CVL>
 	m.append(buf);
 	checksum ^= (slot124Message.cv & 0x7F);
@@ -597,25 +523,23 @@ void nsLOCONETprocessor::writeProgrammerTaskFinalReply(void) {
 	m.append(buf);
 	checksum ^= (slot124Message.cvData & 0x7F);
 	m.append("00 00 ");
-	snprintf(buf, 5, "%02X ", checksum);
+	snprintf(buf, 5, "%02X \n", checksum);  // newline char essential here, else DP will fail to process the message
 	m.append(buf);
 	queueMessage(m, slot124Message.client);
+	nsWiThrottle::queueMessage(m, "DEBUG");
+
+	/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>*/
+
+	//cBAK 0 	RECEIVE E7 0E 7C 2B 00 00 00 05=trk 00=cvH 01=cvL     00=data7    00 00 45
+	//comes up as 1, not zero
+
+	//there's a bug in the DP CV screen.
+	// [E7 0E 7C 2B 00 00 00 05 00 01 00 00 00 45]  Programming Response: Read Byte in Direct Mode on Service Track Was Successful: CV2 value 0 (0x00, 00000000b).
+	//i.e. it read as zero, DP decoded it as zero and yet it writes a 1 to the CV window.  IF you run a compare operation, it correctly can verify zero.
+	//the bug is inconsistent because sometimes it can correctly read zero values.
+
+
 }
-
-/*
-}FANTASTIC 43SM RD
-wPTFR
-
-RECEIVE EF 0E 7C 2B 00 00 00 00 00 1C 06 7F 7F 53
-RECEIVE 0xB4 0x7F 0x01 0x35
-RECEIVE E7 0E 7C 2B 00 00 00 05 00 1C 00 00 58  only 13 bytes!
-<0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
-*/
-
-
-
-
-
 
 
 
@@ -623,42 +547,54 @@ RECEIVE E7 0E 7C 2B 00 00 00 05 00 1C 00 00 58  only 13 bytes!
 
 
 /// <summary>
-/// handles callbacks from DCCcore relating to Service Mode and POM. Does not support bit manipulation.
+/// handles async callbacks from DCCcore relating to Service Mode and POM. Does not support bit manipulation.
 /// </summary>
 /// <param name="ack">true if ACK seen, meaning data was read/written correctly</param>
 /// <param name="cvReg">cv register</param>
 /// <param name="cvVal">cv data</param>
 void nsLOCONETprocessor::callbackLocoNet(bool ack, uint16_t cvReg, uint8_t cvVal) {
-	Serial.printf("FANTASTIC %d",slot124Message.PCMD);
+	char buf[12];
+	if (ack) {
+		snprintf(buf, 12, "cBAK %d\n ", cvVal);
+	}
+	else {
+		snprintf(buf, 12, "cBAD %d\n ", cvVal);
+	}
+	
+	nsWiThrottle::queueMessage(buf,"DEBUG");
+	
 	/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
 	PSTAT is <7-4> reserved <3> user abort <2> failed read (no ACK) <1> no write ACK response<0> no loco
 	PCMD was <7>=0 <6>wr/rd <5>byte/bit <4,3>ty1,2 <2>ops/sm <1,0> reserved
 	*/
 	std::string m;
-	//uint8_t PSTAT;
+	
 	
 	//we see PCMD = d43 =0x2b = 0010 1011. 
 	//[EF 0E 7C 2B 00 00 00 00 00 00 03 7F 7F 4A]  Byte Read in Direct Mode on Service Track: CV1.
 
 	if ((slot124Message.PCMD & 0b00100) == 0) {
-		//Service Mode. For read and write we expect ACK
-		Serial.println("SM RD");
+		//Service Mode. For read and write we expect ACK.  Note that LocoNet also has error type PSTAT<0> meaning no loco detected
+		//but I fail to see the benefit of implmenting this.  A loco with dirty wheels would give the same error as no loco at all.
 		if ((slot124Message.PCMD & 0b1000000) == 0) {
 			//SM read
-			//PSTAT += ack ? 0: 0b100;
+			slot124Message.PSTAT = ack ? 0: 0b100;  //<2> no read ACK from decoder
+			if (ack) slot124Message.cvData = cvVal;
 
-			//2025-12-16 lets pretend read was good, and the answer was 42
-			slot124Message.PSTAT = 0;
-			slot124Message.cvData = 42;
+			//2025-12-16 test code, force 0 =good and value =42
+			//slot124Message.PSTAT = 0;
+			//slot124Message.cvData = 42;
+
 			writeProgrammerTaskFinalReply();
 
 		}
 		else {
-			Serial.println("SM WR");
 			//SM write
-				//PSTAT += ack ? 0:0b10;
-				//2025-12-16 lets pretend write was good, and we saw ACK
-			slot124Message.PSTAT = 0;
+			slot124Message.PSTAT = ack ? 0:0b10;  //<1>=0 signifies write ACK seen from decoder
+
+			//2025-12-16 test code, force 0=good ACK
+			//slot124Message.PSTAT = 0;
+			
 			writeProgrammerTaskFinalReply();
 
 		}
@@ -666,6 +602,10 @@ void nsLOCONETprocessor::callbackLocoNet(bool ack, uint16_t cvReg, uint8_t cvVal
 	else {
 		//POM. If client expects ACK we need to confirm we saw it. TY=00 is no act TY=01 expect ACK
 		//better to mask the 5 bits in and then do specific test
+		//2025-12-29 whilst the DCC spec does allow for a current pulse ACK in response to POM, no decoder I own does this, and furthermore its far
+		//more difficult to dectect a 64mA current pulse on the main where multiple other locos are running and causing current pulses due to poor contact.
+		//S-9.3.2 table 2 there is a Railcom ACK code.  Not sure if my software picks this up.  Prob should run some POM commands and see if ACK appears in the railcom slot.
+
 
 
 		
@@ -690,13 +630,11 @@ void* nsLOCONETprocessor:: getSytemSlotPtr(uint8_t locoNetSlot) {
 
 
 
-
-//std::vector<std::uint8_t> tokens;
+/*
 std::string nsLOCONETprocessor::echoRequest(std::vector<std::uint8_t> tokens) {
-
 	return "X";
 }
-
+*/
 
 /// <summary>
 /// generate a string containing OPC_SL_RD_DATA response
@@ -815,14 +753,6 @@ void nsLOCONETprocessor::writeDIRF_SPD( uint8_t* dirf, uint8_t* spd, void* loc) 
 	
 
 
-
-void nsLOCONETprocessor::buildBroadcastQueue(bool clearQueue) {
-	if (clearQueue) {
-		messages.clear();
-		return;
-	}
-}
-
 /// <summary>
 /// Transmit queued messages to a specific client. This will also transmit any broadcast messages
 /// that have been queued up.  It will iterate the message queue.
@@ -855,7 +785,6 @@ void nsLOCONETprocessor::sendToClient(AsyncClient* client) {
 		if (client->space() > sizeof(data) && client->canSend()) {
 			client->add(data, strlen(data));
 			client->send();
-			trace(Serial.printf("Out %s\r\n",data);)
 		}
 
 		//we used new to create *data.  delete now else you create a memory leak
@@ -875,7 +804,7 @@ void nsLOCONETprocessor::sendToClient(AsyncClient* client) {
 
 
 }
-void nsLOCONETprocessor::broadcastSMreadResult(uint16_t cvReg, int16_t cvVal) {}
+
 
 
 /// <summary>
@@ -888,6 +817,6 @@ void nsLOCONETprocessor::queueMessage(std::string s, AsyncClient* client) {
 	m.toClient = client;
 	m.msg = s;
 	messages.push_back(m);
+	
 }
 
-void nsLOCONETprocessor::setPower(bool powerOn);

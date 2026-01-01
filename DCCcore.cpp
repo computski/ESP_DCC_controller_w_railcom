@@ -8,7 +8,6 @@
 #include "DCCcore.h"
 #include "DCClayer1.h"
 #include "DCCweb.h"
-//#include "DCCEXprocessor.h"
 
 
 #include <LiquidCrystal_I2C.h>   //Github mlinares1998/NewLiquidCrystal
@@ -930,9 +929,7 @@ sent out*/
 				trace(Serial.printf("reg %d val %d\n\r", m_cv.cvReg, m_cv.cvData);)
 				nsDCCweb::broadcastSMreadResult(m_cv.cvReg, m_cv.cvData);
 				
-				//2025-10-04 added DCCEX protocol support
-				//nsDCCEXprocessor::broadcastSMreadResult(m_cv.cvReg, m_cv.cvData);
-		
+				
 				//2025-11-20 more elegant, invoke the callback function which was passed to writeSM
 				if (callbackPtr) callbackPtr(power.ackFlag,m_cv.cvReg,m_cv.cvData);
 
@@ -3281,8 +3278,12 @@ void replicateAcrossConsist(int8_t slot) {
 /// <param name="addr">first char A accessory, L long, S short. Followed by the address numeric</param>
 /// <param name="cv">CV register to write to</param>
 /// <param name="val">first char B write byte, R read byte, S set bit, C clear bit. Followed by numeric</param>
+/// <param name="callback">pointer to callback function that will handle the async operation result</param>
 ///  <returns>false if command malformed, true if initiated</returns>
-bool writePOMcommand(const char* address, uint16_t cv, const char* val) {
+bool writePOMcommand(const char* address, uint16_t cv, const char* val, void (*callback)(bool, uint16_t, uint8_t)) {
+	//2026-01-01 if we have been given a callback address, then ACK is expected.  S-9.3.2 states ACK|NACK|BUSY is only seen on write operations
+	//copy the callback function pointer to a static var for use later in the DCCpacketEngine
+	callbackPtr = callback;
 
 	if (address == nullptr) return false;
 	if (val == nullptr) return false;
@@ -3295,8 +3296,6 @@ bool writePOMcommand(const char* address, uint16_t cv, const char* val) {
 	if (cv == 0 || cv > 1024) return false;
 	//POM processing code remaps 1 to 0 on the line.
 	m_pom.cvReg = cv;
-
-
 
 	switch (val[0]) {
 	case 'B':
@@ -3335,20 +3334,19 @@ bool writePOMcommand(const char* address, uint16_t cv, const char* val) {
 /// Enter/Exit service mode. Set a cv register value and perform a DIRECT byte read/write.
 /// DCC specification does not allow locos to be driven in service mode.
 /// </summary>
-/// <param name="cvReg">cv target register</param>
+/// <param name="cvReg">cv target register 1 to 1024</param>
 /// <param name="cvVal">cv value to write</param>
 /// <param name="read">true to read a cv</param>
 /// <param name="enterSM">true will establish service mode</param>
 /// <param name="exitSM">true will terminate service mode</param>
 /// <param name="callback">pointer to callback function that will handle the async operation result</param>
-/// <returns>true if command accepted, false if service mode is busy with read/write. Read data and ack are returned asynchronously.</returns>
+/// <returns>true if command accepted, false if service mode is busy with read/write. Read data and ACK are returned asynchronously.</returns>
 bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM, bool exitSM, void (*callback)(bool,uint16_t,uint8_t)) {
 	//2020-12-27 routine is initiate-only.  i.e. initiate a write, initiate a read.  in the case of read
 	//there is a call back to nsDCCweb from the machine state engine
 
-	//note that the DCC spec does not expect to run a loco in service mode, all it supports is setting
-	//and reading of CVs.  If you can read a CV then reasonably you can assume the loco is wired 
-	//correctly and will operate on the Main.
+	//note that the DCC specification does not support running a loco in service mode, only read/write of CVs
+	//If you can read a CV then you can assume the loco is wired correctly and will operate on the Main.
 	//https://github.com/esp8266/Arduino/issues/4689
 
 	

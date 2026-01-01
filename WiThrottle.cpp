@@ -65,8 +65,7 @@ think of this as 'dual-control'.  the local hardware display will remain synchro
 it requests aquisition of a loco.  This causes the function button names to appear in EngineDriver, previously they did not
 when user selected a loco from the server roster.
 
-2025-10-01 added support for DCCEX message processing by calling out to a separate module
-you can find all references as they are prefixed by nsDCCEXprocessor
+
 */
 
 
@@ -78,7 +77,6 @@ you can find all references as they are prefixed by nsDCCEXprocessor
 #include <ESP8266WiFi.h>
 #include <ESPAsyncTCP.h>
 #include <vector>
-#include "DCCEXprocessor.h"
 #include "LocoNetprocessor.h"
 
 using namespace nsWiThrottle;
@@ -353,6 +351,18 @@ static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 		}
 	}
 
+	//2025-12-31 DEBUG over TCP support.  This creates a withrottle entry that can be activated by sending DEBUG over TCP to the server
+	//and the system can report debug messages over it
+	p = strstr(msg, "DEBUG");
+	if (p) {
+		for (auto& c : clients) {
+			if (c.client == client) {
+				c.HU = "DEBUG";
+				return;
+			}
+		}
+	}
+
 
 	//2025-10-01 DCCEX support, any <*> single-char message where * is wild is a DCCEX message
 	//the exception being <;> which is part of a WiThrottle message
@@ -361,10 +371,7 @@ static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 		for (auto& c : clients) {
 			if (c.client == client) {
 				c.HU = "EX";
-				//use nsWiThrottle::handleDataDCCEX to handle future incoming data from this client
-				//and process this first incoming datarequest with the DCCEX processor
-				client->onData(&nsDCCEXprocessor::handleDCCEX, NULL);
-				nsDCCEXprocessor::tokenProcessor(msg, client);
+				//2025-12-18 DCCex not supported
 				return;
 			}
 		}
@@ -930,7 +937,7 @@ void nsWiThrottle::broadcastPower(void) {
 /// <summary>
 /// queue a message for a specific client, or all
 /// </summary>
-/// <param name="s">standard string containing message</param>
+/// <param name="s">message</param>
 /// <param name="client">spcific client, or all if nullptr</param>
 void nsWiThrottle::queueMessage(std::string s, AsyncClient *client) {
 	CLIENTMESSAGE m;
@@ -938,6 +945,27 @@ void nsWiThrottle::queueMessage(std::string s, AsyncClient *client) {
 	m.msg = s;
 	messages.push_back(m);
 }
+
+/// <summary>
+/// queue a message for a specific client identifier
+/// </summary>
+/// <param name="s">message</param>
+/// <param name="identifier">client id such as DEBUG</param>
+void nsWiThrottle::queueMessage(std::string s, std::string identifier) {
+	for (auto c : clients) {
+		if (c.HU == "DEBUG") {
+			if (c.client == nullptr) return;
+			CLIENTMESSAGE m;
+			m.toClient = c.client;
+			m.msg = s;
+			messages.push_back(m);
+		}
+		return;
+	}
+}
+
+
+
 
 
 
@@ -1110,12 +1138,8 @@ void queueTurnouts(bool clearFlags) {
 void nsWiThrottle::broadcastChanges(bool clearFlags) {
 	//sending to a specific client is blocking if you attempt to send more data before the first transmission
 	//has completed.  for this reason we need to group all messages per client and send as a jumbo message
-
-	//2025-10-03 ask DCCEXprocessor to build a broadcast queue.
-	nsDCCEXprocessor::buildBroadcastQueue(false);
-	nsLOCONETprocessor::buildBroadcastQueue(false);
-
-		//deal with turnout changes, put these in the message queue
+		
+	//deal with turnout changes, put these in the message queue
 	queueTurnouts(clearFlags);
 	
 	//2021-02-01 deal with turnout roster AND loco roster changes
@@ -1138,8 +1162,7 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 		//clear msg
 		m.clear();
 		if (c.isDCCEX()){ 
-			//2025-10-03 DCCEX clients are handled in a seperate module
-			nsDCCEXprocessor::sendToClient(c.client);
+			//2025-12-18 no support for DCCEX clients
 			continue;  }
 
 		if (c.isLOCONET()) {
@@ -1293,18 +1316,10 @@ trace(
 		sendToClient(m, c.client);
 
 	}//per client loop
-
-	//2025-10-22 loconet processing
-	nsLOCONETprocessor::buildBroadcastQueue(false);
-
-	// 2025-10-03  done with all DCCEX message processing, clear its message queue
-	nsDCCEXprocessor::buildBroadcastQueue(true);
-	
-
+		
 	//done with all message processing
 	messages.clear();
 	
-
 
 	//done with all processing on all throttles and all clients.  Only now can we clear flags at loco-slot level
 	if (clearFlags) {
@@ -1358,5 +1373,7 @@ void nsWiThrottle::processTimeout() {
 		
 	}
 }
+
+
 #pragma endregion
 

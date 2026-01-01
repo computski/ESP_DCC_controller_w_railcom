@@ -66,16 +66,16 @@ namespace nsLOCONETprocessor {
 
 	void handleLocoNet(void* arg, AsyncClient* client, void* data, size_t len);
 	void tokenProcessor(char* msg, AsyncClient* client);
-	void buildBroadcastQueue(bool clearQueue);
+//	void buildBroadcastQueue(bool clearQueue);
 	void sendToClient(AsyncClient* client);
-	void broadcastSMreadResult(uint16_t cvReg, int16_t cvVal);
+//	void broadcastSMreadResult(uint16_t cvReg, int16_t cvVal);
 	void callbackLocoNet(bool ack, uint16_t cvReg, uint8_t cvVal);
 
 	//internal scope
 	static void queueMessage(std::string s, AsyncClient* client);
 	static void setPower(bool powerOn);
 	static std::string FN_OPC_SL_RD_DATA(int8_t locoSlot);
-	static std::string echoRequest(std::vector<std::uint8_t> tokens);	
+	//static std::string echoRequest(std::vector<std::uint8_t> tokens);	
 	static void writeDIRF_SPD(uint8_t* dirf, uint8_t* spd, void* loc);
 	static void* getSytemSlotPtr(uint8_t locoNetSlot);
 	static void writeProgrammerTaskFinalReply(void);

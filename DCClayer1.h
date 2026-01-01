@@ -45,7 +45,7 @@
 	void railcomLoop(void);
 	void railcomRead(uint16_t address, bool useLongAddr, uint8_t reg);
 
-	static bool decodeRailcom(uint8_t inByte, uint8_t* dataOut, bool ignoreControlChars);
+	//static bool decodeRailcom(uint8_t inByte, uint8_t* dataOut, bool ignoreControlChars);
 	static bool decodeRailcom(uint8_t* inByte, bool ignoreControlChars);
 
 	/*2024-12-12 a note on railcom.  The railcom spec says serial data should be asserted by the decoder around 30uS into the railcom cutout.  The arduino stack does not allow

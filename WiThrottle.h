@@ -2,7 +2,7 @@
 //Implements the JRMI WiThrottle protocol over a TCP socket
 //https://www.jmri.org/help/en/package/jmri/jmrit/withrottle/Protocol.shtml
 //
-// 2025-10-01 added references to DCCEXprocessor and a method on CLIENT_T to test for client type
+// 2025-10-01 added references to Loconetprocessor and a method on CLIENT_T to test for client type
 
 #ifndef _WITHROTTLE_h
 #define _WITHROTTLE_h
@@ -66,7 +66,7 @@ namespace nsWiThrottle {
 	void sendWiMinimal(AsyncClient* client);  //do i need this?
 	void processTimeout();
 	uint8_t clientCount(void);
-
+	void queueMessage(std::string s, std::string identifier);  //overload for debug messages
 
 
 
@@ -75,7 +75,6 @@ namespace nsWiThrottle {
 	static void sendToClient(char *data, AsyncClient *client);
 	static void sendToClient(std::string s, AsyncClient *client);
 	static void	queueMessage(std::string s, AsyncClient *client);
-	static void queueMessage(std::string s, char clientType);
 	static void setPower(bool powerOn);
 	static int8_t addReleaseThrottle(AsyncClient *client, char MT, char *address, bool doAdd);
 	static bool checkDoSteal(char *address, bool checkOnly, bool &isConsist);
