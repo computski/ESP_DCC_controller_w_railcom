@@ -414,7 +414,7 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 					return;
 				}
 
-				if (writeServiceCommand(slot124Message.cv+1, slot124Message.cvData, doRead, false, false, &callbackLocoNet)) {
+				if (writeServiceCommand(slot124Message.cv+1, slot124Message.cvData, doRead, false, false, &handlerLocoNet)) {
 					//read requested, E7 response is via an asynchronous callback
 					queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
 					
@@ -432,32 +432,36 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 			{//POM MODE
 				nsWiThrottle::queueMessage("wsc pom\n","DEBUG");
 
-				char addr[8];   //A123 L8000 S3
-				char cvVal[8];  //B8 R8 is byte write-8 read-8. S and C used for set and clear a bit
-				snprintf(addr, sizeof(addr), "%s%d", "a", 5);
+				//loconet cvs are zero based
+				if ((slot124Message.PCMD & 0b1000) == 0) {
+					//operation not asking for feedback, blind accept, no E7 on completion
+					//queueMessage("RECEIVE 0xB4 0x7F 0x40 0x74\n", client);
 
-				if (slot124Message.address > 127) {snprintf(addr, sizeof(addr), "L%d", slot124Message.address);}
-				else{snprintf(addr, sizeof(addr), "S%d", slot124Message.address);}
+					//https://github.com/JMRI/JMRI/issues/5128 this is odd, apparently B4 6F 40 64 is LACK accept blind
+					//queueMessage("RECEIVE 0xB4 0x6F 0x40 0x64\n", client); but this is not recognised by DP either
 
-				if (doRead) {snprintf(cvVal, sizeof(cvVal), "R%d", slot124Message.cvData);}
-				else { snprintf(cvVal, sizeof(cvVal), "W%d", slot124Message.cvData); }
 
-				writePOMcommand(addr, slot124Message.cv, cvVal,nullptr);
-				//writing a POM command is just a matter of queuing a command in the DCC output buffer, there is no 'busy' to contend with
-				//if JMRI is not expecting ACK then possibly we could respond here with LACK-accept-blind, but I need to test how DP behaves
-				queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
-
-				//if we are expecting ACK then this comes asynchonously via railcom and needs a callback to a handler in this namespace
-				//if not, we can just give the E7 response now
-				//2025-12-29 even though the DCC spec says ACK pulses are a valid POM response, no decoders I own generate an ACK pulse when sent a POM command.
-				//and the DCC spec does not have a means to demand an ACK pulse vs say a Railcom response for POM.
-				//S-9.3.2 para 5.1.2 states BUSY, NACK and ACK can be sent from the decoder.
+					setPOMfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, nullptr);
+					nsWiThrottle::queueMessage("wsc nfb\n", "DEBUG");
+					slot124Message.PSTAT = 0x00; //no write ack from decoder 0b10, because you didn't ask for one!
+					writeProgrammerTaskFinalReply();
 				
-				//E7 response...here
-				/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>*/
+					//There is a bug in DP. It issues a Byte Write, no feedback command but does not accept a LACK no E7 in response.
+					//Instead it expects an E7 response and bitches if this carries no ACK, even though this is what it asked for.
+					//So we can either fake an ACK or actually test for one.
 
-				writeProgrammerTaskFinalReply();
-								
+
+				}else if (setPOMfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, &handlerLocoNet)) {
+					queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
+				}
+				else{
+					//operation not supported
+					queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
+				}
+
+			
+				/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>*/
+				
 				return;
 			}
 
@@ -552,7 +556,7 @@ void nsLOCONETprocessor::writeProgrammerTaskFinalReply(void) {
 /// <param name="ack">true if ACK seen, meaning data was read/written correctly</param>
 /// <param name="cvReg">cv register</param>
 /// <param name="cvVal">cv data</param>
-void nsLOCONETprocessor::callbackLocoNet(bool ack, uint16_t cvReg, uint8_t cvVal) {
+void nsLOCONETprocessor::handlerLocoNet(bool ack, uint16_t cvReg, uint8_t cvVal) {
 	char buf[12];
 	if (ack) {
 		snprintf(buf, 12, "cBAK %d\n ", cvVal);
@@ -581,23 +585,15 @@ void nsLOCONETprocessor::callbackLocoNet(bool ack, uint16_t cvReg, uint8_t cvVal
 			slot124Message.PSTAT = ack ? 0: 0b100;  //<2> no read ACK from decoder
 			if (ack) slot124Message.cvData = cvVal;
 
-			//2025-12-16 test code, force 0 =good and value =42
-			//slot124Message.PSTAT = 0;
-			//slot124Message.cvData = 42;
-
-			writeProgrammerTaskFinalReply();
-
 		}
 		else {
 			//SM write
 			slot124Message.PSTAT = ack ? 0:0b10;  //<1>=0 signifies write ACK seen from decoder
 
-			//2025-12-16 test code, force 0=good ACK
-			//slot124Message.PSTAT = 0;
-			
-			writeProgrammerTaskFinalReply();
-
 		}
+		writeProgrammerTaskFinalReply();
+
+
 	}
 	else {
 		//POM. If client expects ACK we need to confirm we saw it. TY=00 is no act TY=01 expect ACK
@@ -606,7 +602,26 @@ void nsLOCONETprocessor::callbackLocoNet(bool ack, uint16_t cvReg, uint8_t cvVal
 		//more difficult to dectect a 64mA current pulse on the main where multiple other locos are running and causing current pulses due to poor contact.
 		//S-9.3.2 table 2 there is a Railcom ACK code.  Not sure if my software picks this up.  Prob should run some POM commands and see if ACK appears in the railcom slot.
 
+		nsWiThrottle::queueMessage("POMcb", "DEBUG");
+		if ((slot124Message.PCMD & 0b1000000) == 0) {
+			//POM reads, we expect to see ack=true
+			slot124Message.PSTAT = ack ? 0 : 0b100;  //<2> no read ACK from decoder
+			if (ack) slot124Message.cvData = cvVal;
 
+		}
+		else {
+			//POM writes, we expect ack=true, if not then data is the actual ctrl value
+			slot124Message.PSTAT = ack ? 0 : 0b10;  //<1> no write ACK from decoder
+
+
+
+			//specifically you can send a busy message, if seen, rather than a failed write
+			//the problem is, we have now overwritten the prior buffered cv+data we were trying to write... so we need to detect busy ahead of calling writeToPOM()
+
+		}
+		writeProgrammerTaskFinalReply();
+		
+		
 
 		
 	}

@@ -69,7 +69,7 @@ namespace nsLOCONETprocessor {
 //	void buildBroadcastQueue(bool clearQueue);
 	void sendToClient(AsyncClient* client);
 //	void broadcastSMreadResult(uint16_t cvReg, int16_t cvVal);
-	void callbackLocoNet(bool ack, uint16_t cvReg, uint8_t cvVal);
+	void handlerLocoNet(bool ack, uint16_t cvReg, uint8_t cvVal);
 
 	//internal scope
 	static void queueMessage(std::string s, AsyncClient* client);
@@ -81,6 +81,21 @@ namespace nsLOCONETprocessor {
 	static void writeProgrammerTaskFinalReply(void);
 }
 
+
+/*
+09:56:36.912: [EF 0E 7C 2F 00 01 54 00 00 01 00 7F 7F 19]  Byte Read on Main Track (Ops Mode): Decoder address 212: CV2.
+09:56:36.918: [E7 0E 7C 2F 00 01 54 05 00 01 00 00 00 14]  Programming Response: Byte Read on Main Track (Ops Mode) Was Successful: Decoder address 212: CV2 value 0 (0x00, 00000000b).
+final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
+pcmd=2f = 0b10 1111  <w/r> <byte/bit> <ty1> <ty0> <ops/sm> <res> <res>
+pstat=0 and right now code just echos that
+hopsa=01
+lopsa=54
+
+in ops mode, ty0 is always 0, ty1 =0 no feedback, 1=feedback   but this makes no sense for reads because the spec does not provide for ACK on read.  But, if we see AC in the response codes
+from the loco then the data would be valid.
+
+
+*/
 
 
 #endif

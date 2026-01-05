@@ -328,12 +328,6 @@ void nsDCCweb::webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size
 			return;
 		}
 
-		
-
-		/*for all other types, call out to the JsonThrottle if module loaded*/
-#ifdef _JSONTHROTTLE_h
-		nsJsonThrottle::processJson(doc);
-#endif
 	}//end switch
 }//end websocket event
 
@@ -875,7 +869,7 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 		out["type"] = "dccUI";
 		out["cmd"] = "pom";
 		out["action"] = "ok";
-		out["success"]= writePOMcommand(address, cv_reg, cv_val,nullptr);
+		out["success"]= writePOMcommand(address, cv_reg, cv_val);
 		sendJson(out);
 	}
 

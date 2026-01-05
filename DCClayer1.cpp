@@ -5,6 +5,7 @@
 #include "DCClayer1.h"
 #include "DCCcore.h"  //need for railcom
 
+
 /*DCClayer1 puts a DCC signal on the track.  It will continuously write the DCCbuffer to the track
 The routine also sets a msTickFlag every 10mS which the main loop can use for general timing such as
 keyboard scans.  It also generates a Railcom Cutout and looks for inbound Railcom data.
@@ -166,8 +167,9 @@ enum RC_STATE
 {
 	RC_EXPECT_ID0,
 	RC_EXPECT_BYTE,
+	RC_EXPECT_CTRL,
 	RC_SUCCESS,
-	RC_TIMEOUT,
+	RC_TIMEOUT	
 };
 
 # define LMD18200T_DEVICE	0
@@ -546,7 +548,7 @@ void railcomInit() {
 #endif // !PIN_RAILCOM_SYNC
 
 	Serial.flush();
-	railcomRead(0, false, 1);
+	railcomRead(false);
 	
 	//railcom uses 250kbaud, don't enable this baud rate if we are compiling for TRACE because trace needs the serial port
 #ifndef TRACE
@@ -593,7 +595,7 @@ void railcomLoop(void) {
 
 				//incoming websocket or HUI button pushes were processed in DCCcore.  Once layer1 decodes a railcom message
 				//it needs to call back to DCCcore to process the valid payload.
-				railcomCallback(_payload, true);
+				railcomCallback(_payload, 0,true);
 			
 			}
 			//stop looking for incoming messages
@@ -604,6 +606,21 @@ void railcomLoop(void) {
 		case RC_TIMEOUT:
 			break;
 
+		case RC_EXPECT_CTRL:
+			//expect a control byte 
+			if (decodeRailcom(&byteNew, false)) {
+				//is this a control char?
+				switch (byteNew) {
+				case 0x0F:  //NACK
+				case 0xF0:  //ACK
+				case 0xF1:  //BUSY
+					railcomCallback(0,byteNew, true);
+					//not always success as it might be NACK or BUSY but its not a timeout
+					_rcstate = RC_SUCCESS;
+				}
+				//data payloads are ignored
+			}
+			break;
 
 		default:
 			if (decodeRailcom(&byteNew, true)) {
@@ -634,8 +651,8 @@ void railcomLoop(void) {
 			break;
 
 		default:
-			//send this message ONCE
-			railcomCallback(0, false);
+			//send this message ONCE, and send NACK for timeouts
+			railcomCallback(0,0x0F, false);
 			_rcstate = RC_TIMEOUT;
 		}
 	}
@@ -644,24 +661,27 @@ void railcomLoop(void) {
 }
 
 
+
+//think again. if I have m_pom.expectACK then when we truely read, we are waiting on data or a timeout.  if we write, then we write a dccpacket and then wait on
+//railcom for ACK or timeout
+
 /// <summary>
-/// Reset railcom reader, the params are ignored.
+/// Reset railcom reader.  Does not support accessory addresses.
 /// </summary>
-/// <param name="address">ignored</param>
-/// <param name="useLongAddr">ignored</param>
-/// <param name="reg">ignored</param>
-void railcomRead(uint16_t address, bool useLongAddr, uint8_t reg) {
+/// <param name="lookForCTRL">look for ACK|NACK|BUSY</param>
+void railcomRead(bool lookForCTRL) {
 #ifdef DEBUG_RC
 	return;
 #endif 
 	//S-9.3.2 section 3.1
-	_rcstate = RC_EXPECT_ID0;
 	DCCpacket.railcomPacketCount = 80;
+	_rcstate = RC_EXPECT_ID0;
+	if (lookForCTRL) _rcstate = RC_EXPECT_CTRL;
 }
 
 /*
 /// <summary>
-/// decode inbound data against the 4/8 decode table
+/// decode inbound data against the 4/8 decode table.		WE DON'T NEED THIS OVERLOAD
 /// </summary>
 /// <param name="inByte">4/8 coded serial data inbound</param>
 /// <param name="dataOut">the decoded byte</param>

@@ -43,7 +43,7 @@
 	//railcom related
 	void railcomInit();
 	void railcomLoop(void);
-	void railcomRead(uint16_t address, bool useLongAddr, uint8_t reg);
+	void railcomRead(bool lookForCTRL);
 
 	//static bool decodeRailcom(uint8_t inByte, uint8_t* dataOut, bool ignoreControlChars);
 	static bool decodeRailcom(uint8_t* inByte, bool ignoreControlChars);
