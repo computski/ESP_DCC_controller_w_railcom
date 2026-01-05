@@ -122,9 +122,6 @@ void loop() {
 	nsDCCweb::broadcastChanges();
 #endif
 
-#ifdef _JSONTHROTTLE_h
-	nsJsonThrottle::broadcastJSONchanges(false);
-#endif
 
 #ifdef _WITHROTTLE_h
 	nsWiThrottle::broadcastChanges(false);
@@ -163,13 +160,6 @@ void loop() {
 			nsDCCweb::broadcastPower();
 #endif
 
-
-
-
-#ifdef _JSONTHROTTLE_h
-			/*transmit power status to websocket*/
-			nsJsonThrottle::broadcastJsonPower();
-#endif
 
 #ifdef _WITHROTTLE_h
 			/*transmit power status to WiThrottles*/

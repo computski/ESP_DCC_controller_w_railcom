@@ -122,7 +122,8 @@ enum POMstate {
 	POM_BIT,
 	POM_BIT_WRITE,
 	POM_BYTE_READ,
-	POM_BIT_READ
+	POM_BIT_READ,
+	POM_WAIT_CTRL
 };
 
 struct POM {
@@ -130,6 +131,7 @@ struct POM {
 	bool    useLongAddr;
 	bool	useAccessoryAddr;  //added 2020-06-17
 	bool	readSuccess =true;	//added 2024-12-02
+	bool	expectACK = false;	//added 2026-01-03
 	uint16_t cvReg = 29;
 	uint8_t  cvData = 128;  
 	uint8_t	 cvBit = 0; //<7> is the bit value, <0-2> the bit pos
@@ -221,16 +223,16 @@ void updateLocalMachine(void);
 void dccGetSettings();
 void replicateAcrossConsist(int8_t slot);
 void dccPutSettings();
-bool writePOMcommand(const char* address, uint16_t cv, const char* val, void(*callback)(bool, uint16_t, uint8_t));
+bool writePOMcommand(const char* address, uint16_t cv, const char* val);
 bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM, bool exitSM,void(*callback)(bool,uint16_t,uint8_t)); 
 bool ServiceModeBusy(void);
-
-float getVolt();  //debug
-void railcomCallback(uint8_t result, bool success);
+void railcomCallback(uint8_t result, uint8_t ctrl, bool success);
+bool setPOMfromLoconet(uint8_t PCMD, uint16_t addr, uint16_t cv, uint8_t data, void (*callback)(bool, uint16_t, uint8_t));
+void updatePOMdisplay();
 
 //debug
 void debugTurnoutArray(void);
-
+float getVolt();  //debug
 
 
 

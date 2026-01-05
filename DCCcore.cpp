@@ -8,6 +8,7 @@
 #include "DCCcore.h"
 #include "DCClayer1.h"
 #include "DCCweb.h"
+#include "WiThrottle.h"  //DEBUG for POM only
 
 
 #include <LiquidCrystal_I2C.h>   //Github mlinares1998/NewLiquidCrystal
@@ -56,7 +57,7 @@ of addresses having sub-elements 1 to 4 beneath them (which the DCC++ protocol i
 
 //2025-11-20 pointer to a callback function in the locoNetprocessor
 //https://stackoverflow.com/questions/1789807/function-pointer-as-an-argument
-static void (*callbackPtr)(bool, uint16_t, uint8_t);    //abc
+static void (*LocoNetcallbackPtr)(bool, uint16_t, uint8_t); 
 
 
 
@@ -561,8 +562,16 @@ void dccPacketEngine(void) {
 			}
 			DCCpacket.packetLen++;
 			/*will exit with DCCpacket.packetLen set at correct length of i+1*/
+			//m_pom.state = POM_BYTE;
+			m_pom.state = POM_WAIT_CTRL;
+			break;
+
+		case POM_WAIT_CTRL:
+			//intiate a railcom read for ctrl char, if required
+			//railcomRead(true)
 			m_pom.state = POM_BYTE;
 			break;
+
 
 		case POM_BIT_READ:   //2024-12-05 take same byte read action
 		case POM_BYTE_READ:  //2024-05-04
@@ -588,6 +597,10 @@ void dccPacketEngine(void) {
 
 			m_pom.packetCount = 10;  //increase from 4 to 10.  Each packet takes around 8 mS.  This did not help much.  Better if the loco is in the roster.
 			
+
+			//2026-01-03 should we send the POM command 10 times? surely the decoder is trying to respond to it
+
+
 			if (false) {
 				//placeholder for accessory read
 			}
@@ -625,14 +638,14 @@ void dccPacketEngine(void) {
 			//2025-11-16 there is a bug created by this; we seem to end up with multiple loco S3 created in the free slots.  This causes erratic behaviour because they all
 			//transmit their speed/dir/func to the track.. not fixed yet
 			
-			{//scope block start
+			{//scope block start RAILCOM READ
 				char buffer[10];
 				char existing[10];
 				sprintf(buffer, "S%d", m_pom.address);
-				buffer[0] = m_tempLoco.useLongAddress ? 'L' : 'S';
+				buffer[0] = m_pom.useLongAddr ? 'L' : 'S';   
 				int8_t theSlot = findLoco(buffer, existing);
-				//kick off the read process
-				railcomRead(m_pom.address, m_pom.useLongAddr, m_pom.cvReg);
+				//kick off the read process, which returns a result via DCCcore::railcomCallback()
+				railcomRead(false);
 
 				//pick up a zero slot or bump one. POM read is only reliable if the loco is in the roster
 				if (theSlot == -1) break;
@@ -815,7 +828,7 @@ sent out*/
 
 			//revert to average mode, and invoke a callback
 			ina219Mode(true); 
-			if (callbackPtr) callbackPtr(power.ackFlag,m_cv.cvReg,m_cv.cvData);
+			if (LocoNetcallbackPtr) LocoNetcallbackPtr(power.ackFlag,m_cv.cvReg,m_cv.cvData);
 			m_cv.state = CV_IDLE;
 			break;
 
@@ -931,7 +944,7 @@ sent out*/
 				
 				
 				//2025-11-20 more elegant, invoke the callback function which was passed to writeSM
-				if (callbackPtr) callbackPtr(power.ackFlag,m_cv.cvReg,m_cv.cvData);
+				if (LocoNetcallbackPtr) LocoNetcallbackPtr(power.ackFlag,m_cv.cvReg,m_cv.cvData);
 
 			}
 			
@@ -1224,7 +1237,7 @@ int8_t findTurnout(uint16_t turnoutAddress) {
 returns true if triggering a display update
 2020-12-21 it only supports byte write*/
 bool setServiceModefromKey(void) {
-	callbackPtr = nullptr;
+	LocoNetcallbackPtr = nullptr;
 	uint8_t i;
 	if (keypad.keyHeld) { return false; }
 	if (keypad.keyASCII >= '0' && keypad.keyASCII <= '9') {
@@ -1340,6 +1353,84 @@ void setPowerFromKey(void) {
 	/*flag pending write to eeprom*/
 	bootController.isDirty = true;
 }
+
+
+/// <summary>
+/// Initialise POM activity from a loconet command
+/// </summary>
+/// <param name="PCMD"></param>
+/// <param name="addr"></param>
+/// <param name="cv"></param>
+/// <param name="data"></param>
+/// <param name="callback"></param>
+/// <returns>false if operation unsupported</returns>
+bool setPOMfromLoconet(uint8_t PCMD, uint16_t addr, uint16_t cv, uint8_t data, void (*callback)(bool, uint16_t, uint8_t)) {
+	//2026-01-01 if we have been given a callback address, then ACK is expected.  S-9.3.2 states ACK|NACK|BUSY is only seen on write operations
+	//copy the callback function pointer to a static var for use later in the DCCpacketEngine
+	
+	//LocoNet specification fails to cover how bit operation on POM are acheived.  Potentially its encoded in the data value, e.g. 
+	LocoNetcallbackPtr = callback;
+	if ((PCMD & 0b100) == 0) return false;  //not ops mode
+
+	m_pom.useAccessoryAddr = false;
+	m_pom.address = addr;
+	m_pom.useLongAddr = addr > 127 ? true : false;
+	m_pom.cvReg = cv+1;  //m_pom is one-based
+	m_pom.cvData = data;
+	m_pom.readSuccess = false;
+
+	if (m_pom.address > 10239) { m_pom.address = 10239; }
+	if (m_pom.cvReg > 1024) { m_pom.address = 1024; }
+
+	//what kind of POM operation do we need?
+	//<6>=write/read <5>=byte/bit <3>=TY1 = feedback/no feedback
+	m_pom.expectACK = (PCMD & 0b1000) == 0 ? 0 : 1;
+
+	//[EF 0E 7C 2F 00 01 54 00 00 00 00 7F 7F 18]  Byte Read on Main Track (Ops Mode): Decoder address 212: CV1.
+	// [EF 0E 7C 67 00 01 54 00 00 01 03 7F 7F 52] Byte Write(No feedback) on Main Track : Decoder address 212 : CV2 value 3 (0x03, 00000011b).
+	//2f=00101111
+	//67=01100111
+	//yeah but despite DP stating no feedback, it still expects feedback as in a full E7 response rathr than blind no E7 
+
+
+	if ((PCMD & 0b1000000) == 0){
+		//read
+		if ((PCMD & 0b100000) != 0){
+		//byte
+			m_pom.state = POM_BYTE_READ;
+			dccSE = DCC_POM;  //initiate sequence
+			m_pom.timeout = 8; //2 sec and then display will update
+			updatePOMdisplay();
+			nsWiThrottle::queueMessage("spfl rd\n", "DEBUG"); //debug
+
+			return true;
+		}
+		else {
+			//bit. not supported
+			return false;
+		}
+
+	}
+	else {
+		//write
+		if ((PCMD & 0b100000) != 0) {
+			//byte
+			m_pom.state = POM_BYTE_WRITE;
+			dccSE = DCC_POM;  //initiate write sequence
+			m_pom.timeout = 8;
+			nsWiThrottle::queueMessage("spfl wr\n", "DEBUG"); //debug
+
+			updatePOMdisplay();
+			return true;
+		}
+		//bit, not supported.
+		return false;
+				
+	}
+	return false;
+}
+
+
 
 void setPOMfromKey(void) {
 	//default action is to re-enable numeric/bit display
@@ -3278,15 +3369,17 @@ void replicateAcrossConsist(int8_t slot) {
 /// <param name="addr">first char A accessory, L long, S short. Followed by the address numeric</param>
 /// <param name="cv">CV register to write to</param>
 /// <param name="val">first char B write byte, R read byte, S set bit, C clear bit. Followed by numeric</param>
-/// <param name="callback">pointer to callback function that will handle the async operation result</param>
 ///  <returns>false if command malformed, true if initiated</returns>
-bool writePOMcommand(const char* address, uint16_t cv, const char* val, void (*callback)(bool, uint16_t, uint8_t)) {
-	//2026-01-01 if we have been given a callback address, then ACK is expected.  S-9.3.2 states ACK|NACK|BUSY is only seen on write operations
-	//copy the callback function pointer to a static var for use later in the DCCpacketEngine
-	callbackPtr = callback;
-
+bool writePOMcommand(const char* address, uint16_t cv, const char* val) {
+	
 	if (address == nullptr) return false;
 	if (val == nullptr) return false;
+
+	nsWiThrottle::queueMessage(address, "DEBUG");  //DEBUG
+	nsWiThrottle::queueMessage(" wpc \n", "DEBUG");  //DEBUG
+	nsWiThrottle::queueMessage(val, "DEBUG");  //DEBUG
+	nsWiThrottle::queueMessage( "wpcv\n", "DEBUG");  //DEBUG
+
 
 	m_pom.useLongAddr = address[0] == 'L' ? true : false;
 	m_pom.address = atoi(address + 1);
@@ -3352,7 +3445,7 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM,
 	
 	//https://stackoverflow.com/questions/1789807/function-pointer-as-an-argument
 	//we copy the callback function pointer to a static var for use later in the DCCpacketEngine
-	callbackPtr = callback;
+	LocoNetcallbackPtr = callback;
 
 
 	if (enterSM) {
@@ -3589,13 +3682,14 @@ void incrLocoHistory(LOCO* loc) {
 
 /// <summary>
 /// Handles event raised from layer1 railcom routine if data is read or there is a timeout
+/// Also handles ACK|NACK|BUSY if required
 /// </summary>
 /// <param name="result">railcom value</param>
-/// <param name="success">true if read, false if a timeout</param>
-void railcomCallback(uint8_t result, bool success) {
+/// <param name="ctrl">railcom ACK|NACK|BUSY</param>
+/// <param name="success">true if good data|ctrl, false if a timeout</param>
+void railcomCallback(uint8_t result, uint8_t ctrl, bool success) {
 	//if the HUI is actively showing the POM screen, then repaint this
-	trace(Serial.println("railcomCallback");)
-
+	
 		//send a websocket transmission
 		//we do this via a routine in DCCweb because all websockets are handled there
 		//we need to populate addr, cvReg and payload (i.e. the cv return value)
@@ -3604,11 +3698,31 @@ void railcomCallback(uint8_t result, bool success) {
 		addrType = m_pom.useAccessoryAddr ? 'A' : addrType;
 		addrType = m_pom.useLongAddr ? 'L' : addrType;
 
+		//2026-01-02 if we were looking for a ctrl char this will appear in the result
+		//PROBLEM: result is 8 bit so ctrl is indistinguishable from data.
+		//will fix with ctrl value, more work to be done
+
+
 		if (success){
 			nsDCCweb::broadcastPOMreadResult(m_pom.cvReg,result,addrType,m_pom.address);
 		}
 		else {
 			nsDCCweb::broadcastPOMreadResult(m_pom.cvReg, -1, addrType, m_pom.address);
+		}
+
+		//2026-02-02 deal with callback to LocoNetprocessor (bool ack, u16 reg, u8 data)
+		if (LocoNetcallbackPtr) {
+			//for writes, we expect to see ctrl=ACK, we cannot differentiate between BUSY|NACK
+			if (ctrl == 0) {
+				//was a data read
+				LocoNetcallbackPtr(success, m_pom.cvReg, result);
+			}
+			else {
+				//write, expect ACK, return the ctrl value seen.  ctrl=NACK for timeouts, and success==false
+				//success==true if we see any valid control chr
+				LocoNetcallbackPtr(ctrl == 0xF0?true:false, m_pom.cvReg, ctrl);
+			}
+			LocoNetcallbackPtr == nullptr;
 		}
 
 	if (m_machineSE != M_POM) return;
@@ -3629,4 +3743,72 @@ void railcomCallback(uint8_t result, bool success) {
 	}
 }
 
+/// <summary>
+/// sets DCCpacket to an extended loco speed packet which is used for railcom polling. This avoids need to have the target loco in
+/// the slot roster.  If loco exists in the roster, then the slot speed/dir will be used, else it will default to zero speed.  Works
+/// off values held in m_pom
+/// </summary>
 
+void createPOMpollingPacket(void) {
+	uint8_t i;
+	if (m_pom.useLongAddr) {
+		/*long address format S9.2.1 para 60*/
+		DCCpacket.data[0] = m_pom.address >> 8;
+		DCCpacket.data[0] |= 0b11000000;
+		DCCpacket.data[1] = m_pom.address & 0x00FF;
+		i = 2;
+	}
+	else {
+		DCCpacket.data[0] = (m_pom.address & 0x7F);
+		i = 1;
+	}
+
+	//does this loco exist in the roster?
+	char buf[8];
+	int s;
+	snprintf(buf, 8, "L%d", m_pom.address);
+	buf[0] = m_pom.useLongAddr ? 'L' : 'S';
+	s = findLoco(buf, nullptr, true);
+	if (-1 == s) {
+	//not in the roster, we need to set zero speed and forward dir
+	/*two speed-bytes*/
+		DCCpacket.data[i] = 0b00111111;
+		i++;
+		DCCpacket.data[i] = 0b10000000;
+		i++;
+	
+	}
+	else
+	{//in the roster, transmit its speed
+		uint8_t speedCode = loco[s].speedStep;  //UI display speed 0-28 or 0-128
+		//assume we always use 128 steps
+		if (speedCode > 0) { speedCode++; }
+		speedCode &= 0x7F;
+
+	 /*two speed-bytes*/
+		DCCpacket.data[i] = 0b00111111;
+		i++;
+		/*mask in <7> which is direction*/
+		if (loco[s].forward) { speedCode |= 0b10000000; }
+		DCCpacket.data[i] = speedCode;
+		i++;
+
+
+
+	}
+
+	/*calc checksum and packet length. i points to checksum byte*/
+	DCCpacket.data[i] = 0;
+	for (DCCpacket.packetLen = 0; DCCpacket.packetLen < i; DCCpacket.packetLen++) {
+		DCCpacket.data[i] ^= DCCpacket.data[DCCpacket.packetLen];
+	}
+	DCCpacket.packetLen++;
+	//will exit with DCCpacket.packetLen set at correct length of i+1
+
+	DCCpacket.doCutout = true;
+
+	
+	
+	
+
+}
