@@ -69,7 +69,7 @@ namespace nsLOCONETprocessor {
 //	void buildBroadcastQueue(bool clearQueue);
 	void sendToClient(AsyncClient* client);
 //	void broadcastSMreadResult(uint16_t cvReg, int16_t cvVal);
-	void handlerLocoNet(bool ack, uint16_t cvReg, uint8_t cvVal);
+	void asyncLocoNet(bool ack, uint16_t cv,uint8_t cvVal);
 
 	//internal scope
 	static void queueMessage(std::string s, AsyncClient* client);

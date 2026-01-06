@@ -22,6 +22,12 @@
 * debug approach.  The ESP is on .129 port 2560.  I can connect to this with Hercules TCP client.  If we then send to 'all clients' as ASCII debug this should work.
 * 
 * POM, I need to reprogram this to expect NACK, ACK, BUSY via a callback.  These are only expected if a callback routine has been set.
+
+
+2026-01-06 intractable bugs.  There's some flakey shit going on with DP.  For POM read it can read CV1 just fine, the hardware reads a good value and this comes back in 
+monitor loconet.  but cv8, despite reading correctly on the hardware won't appear in the loconet traffic despite the low level loconet write routine confirming it was called.
+so either it failed to encode the string correctly with maybe a missing return or errant checksum, else its DP that is failing to read the incoming data.
+
 */
 
 
@@ -388,49 +394,31 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 			slot124Message.cvData = tokens[10]; //data7  
 			slot124Message.cvData += (tokens[8] & 0b10) == 0?0:0x80;//D7 from CVH
 			slot124Message.PCMD = tokens[3];
-									
-			bool doRead;
-			switch (tokens[3] & 0b00111100) {
-			case 0b00101000: //direct, SM, byte
-			case 0b00101100: //ops byte with ACK
-			case 0b00100100: //ops byte with no-ACK
-				//enter service mode, this is a call to DCCcore.cpp
-				writeServiceCommand(0, 0, true, true, false, nullptr);
-				break;
-			default:
-				//operation not supported
-				queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
-				return;
-			}
-			doRead = (tokens[3] & 0b01000000) == 0 ? true : false;
 
 			if ((tokens[3] & 0b100) == 0){
 				//SERVICE MODE
-				//LocoNet encodes CV1 as a zero value in HOPSA LOPSA, we need to add 1 before calling writeServiceCommand
+				writeServiceCommand(0, 0, true, true, false, nullptr);
 
 				if (ServiceModeBusy()) {  //this is a function call to DCCcore
 					queueMessage("RECEIVE 0xB4 0x7F 0x00 0x34\n", client);  //LACK and busy
-					nsWiThrottle::queueMessage("busy\n", "DEBUG");
 					return;
 				}
 
-				if (writeServiceCommand(slot124Message.cv+1, slot124Message.cvData, doRead, false, false, &handlerLocoNet)) {
+	
+				if (sendPCMDfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, &asyncLocoNet)) {
 					//read requested, E7 response is via an asynchronous callback
 					queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
-					
-					snprintf(buf, BUFSIZ, "cv %d\n", slot124Message.cv+1);
-					nsWiThrottle::queueMessage(buf, "DEBUG");
 				}
-				else {
-					//some other error, e.g. not in service mode or sm is busy
-					queueMessage("RECEIVE 0xB4 0x7F 0x00 0x34\n", client);  //LACK and busy
+				else
+				{	//operation not supported
+					queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
 				}
+
 				return;
 
 			}
 			else
 			{//POM MODE
-				nsWiThrottle::queueMessage("wsc pom\n","DEBUG");
 
 				//loconet cvs are zero based
 				if ((slot124Message.PCMD & 0b1000) == 0) {
@@ -441,8 +429,7 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 					//queueMessage("RECEIVE 0xB4 0x6F 0x40 0x64\n", client); but this is not recognised by DP either
 
 
-					setPOMfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, nullptr);
-					nsWiThrottle::queueMessage("wsc nfb\n", "DEBUG");
+					sendPCMDfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, nullptr);
 					slot124Message.PSTAT = 0x00; //no write ack from decoder 0b10, because you didn't ask for one!
 					writeProgrammerTaskFinalReply();
 				
@@ -450,8 +437,7 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 					//Instead it expects an E7 response and bitches if this carries no ACK, even though this is what it asked for.
 					//So we can either fake an ACK or actually test for one.
 
-
-				}else if (setPOMfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, &handlerLocoNet)) {
+				}else if (sendPCMDfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, &asyncLocoNet)) {
 					queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
 				}
 				else{
@@ -461,7 +447,6 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 
 			
 				/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>*/
-				
 				return;
 			}
 
@@ -484,7 +469,10 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 /// </summary>
 void nsLOCONETprocessor::writeProgrammerTaskFinalReply(void) {
 	/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>*/
-	if (slot124Message.client == nullptr) return;
+	if (slot124Message.client == nullptr) { 
+		nsWiThrottle::queueMessage("nullp", "DEBUG");
+		return; }
+	nsWiThrottle::queueMessage("wptfr", "DEBUG");
 	char buf[5];
 	std::string m;
 	m.append("RECEIVE E7 0E 7C ");
@@ -510,12 +498,12 @@ void nsLOCONETprocessor::writeProgrammerTaskFinalReply(void) {
 	m.append(buf);
 	checksum ^= trk;
 
-	//CVH is  <0,0,CV9,CV8 - 0,0, D7,CV7>
+	//CVH is  <0,0,CV9,CV8,0,0,D7,CV7> sheer madness
 	uint8_t cvh = (slot124Message.cv >> 7);  //preserve <cv9,8,7> as lsb
 	cvh = cvh << 3; //<cv 9,8,7 0 0 0>
-	cvh += (cvh & 0b1000) == 0 ? 0 : 1;  //copy cv7 to 0 bit posn
+	cvh += (cvh & 0b1000) == 0 ? 0 : 1;  //copy cv7 to <0>
 	cvh &= 0b00110001; //clear bits 3,2,1
-	cvh += (slot124Message.cvData & 0x80) == 0 ? 0 : 1;//add in D7 databit
+	cvh += (slot124Message.cvData & 0x80) == 0 ? 0 : 2;//add D7 databit as <1>
 	snprintf(buf, 5, "%02X ", cvh);
 	m.append(buf);
 	checksum ^= cvh;
@@ -530,8 +518,7 @@ void nsLOCONETprocessor::writeProgrammerTaskFinalReply(void) {
 	snprintf(buf, 5, "%02X \n", checksum);  // newline char essential here, else DP will fail to process the message
 	m.append(buf);
 	queueMessage(m, slot124Message.client);
-	nsWiThrottle::queueMessage(m, "DEBUG");
-
+	
 	/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>*/
 
 	//cBAK 0 	RECEIVE E7 0E 7C 2B 00 00 00 05=trk 00=cvH 01=cvL     00=data7    00 00 45
@@ -554,9 +541,11 @@ void nsLOCONETprocessor::writeProgrammerTaskFinalReply(void) {
 /// handles async callbacks from DCCcore relating to Service Mode and POM. Does not support bit manipulation.
 /// </summary>
 /// <param name="ack">true if ACK seen, meaning data was read/written correctly</param>
-/// <param name="cvReg">cv register</param>
 /// <param name="cvVal">cv data</param>
-void nsLOCONETprocessor::handlerLocoNet(bool ack, uint16_t cvReg, uint8_t cvVal) {
+void nsLOCONETprocessor::asyncLocoNet(bool ack, uint16_t cv, uint8_t cvVal) {
+	//I don't think we use the cv parameter, the call originates with sendPCMDfromLoconet() and we have already stored cv in slot124message object
+	//slot124 knows whether it was a POM or SM call, this routine does not.
+
 	char buf[12];
 	if (ack) {
 		snprintf(buf, 12, "cBAK %d\n ", cvVal);
@@ -564,14 +553,12 @@ void nsLOCONETprocessor::handlerLocoNet(bool ack, uint16_t cvReg, uint8_t cvVal)
 	else {
 		snprintf(buf, 12, "cBAD %d\n ", cvVal);
 	}
-	
 	nsWiThrottle::queueMessage(buf,"DEBUG");
 	
 	/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
 	PSTAT is <7-4> reserved <3> user abort <2> failed read (no ACK) <1> no write ACK response<0> no loco
 	PCMD was <7>=0 <6>wr/rd <5>byte/bit <4,3>ty1,2 <2>ops/sm <1,0> reserved
 	*/
-	std::string m;
 	
 	
 	//we see PCMD = d43 =0x2b = 0010 1011. 
@@ -602,7 +589,6 @@ void nsLOCONETprocessor::handlerLocoNet(bool ack, uint16_t cvReg, uint8_t cvVal)
 		//more difficult to dectect a 64mA current pulse on the main where multiple other locos are running and causing current pulses due to poor contact.
 		//S-9.3.2 table 2 there is a Railcom ACK code.  Not sure if my software picks this up.  Prob should run some POM commands and see if ACK appears in the railcom slot.
 
-		nsWiThrottle::queueMessage("POMcb", "DEBUG");
 		if ((slot124Message.PCMD & 0b1000000) == 0) {
 			//POM reads, we expect to see ack=true
 			slot124Message.PSTAT = ack ? 0 : 0b100;  //<2> no read ACK from decoder
@@ -613,21 +599,13 @@ void nsLOCONETprocessor::handlerLocoNet(bool ack, uint16_t cvReg, uint8_t cvVal)
 			//POM writes, we expect ack=true, if not then data is the actual ctrl value
 			slot124Message.PSTAT = ack ? 0 : 0b10;  //<1> no write ACK from decoder
 
-
-
 			//specifically you can send a busy message, if seen, rather than a failed write
 			//the problem is, we have now overwritten the prior buffered cv+data we were trying to write... so we need to detect busy ahead of calling writeToPOM()
 
 		}
 		writeProgrammerTaskFinalReply();
 		
-		
-
-		
 	}
-
-	
-
 
 }
 
