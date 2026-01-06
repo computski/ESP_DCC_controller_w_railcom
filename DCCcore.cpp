@@ -57,7 +57,7 @@ of addresses having sub-elements 1 to 4 beneath them (which the DCC++ protocol i
 
 //2025-11-20 pointer to a callback function in the locoNetprocessor
 //https://stackoverflow.com/questions/1789807/function-pointer-as-an-argument
-static void (*LocoNetcallbackPtr)(bool, uint16_t, uint8_t); 
+static void (*LocoNetcallbackPtr)(bool,uint16_t, uint8_t); 
 
 
 
@@ -75,11 +75,11 @@ LOCO loco[MAX_LOCO];
 ACCESSORY accessory;
 bool quarterSecFlag;
 
-static CV m_cv;  //2024-11-16 moved it here from .h
+static SM m_sm;  //2024-11-16 moved it here from .h
 static POM m_pom;
 
-uint8_t   m_generalTimer;
-uint8_t  m_tick;  //25 ticks in a quarter second
+uint8_t m_generalTimer;
+uint8_t m_tick;  //25 ticks in a quarter second
 uint8_t m_eStopDebounce;  //holds debounce scan of local estop button
 
 
@@ -719,100 +719,112 @@ void dccPacketEngine(void) {
 
 
 	case DCC_SERVICE:
-		/*service mode, the makes use of a state engine within the cv struct see S9.2.3*/
+		/*service mode, the makes use of a state engine within the SM struct see S9.2.3*/
 		power.serviceMode = true;
-		m_cv.packetCount -= m_cv.packetCount > 0 ? 1 : 0;
-		if (m_cv.packetCount != 0) { break; }
+		m_sm.packetCount -= m_sm.packetCount > 0 ? 1 : 0;
+		if (m_sm.packetCount != 0) { break; }
 
-		switch (m_cv.state) {
+		switch (m_sm.state) {
 		case PG_START:
 			/*PAGED CV ADDRESSING para 205. 3 or more reset packets*/
 			DCCpacket.longPreamble = true;
-			m_cv.packetCount = 10;
+			m_sm.packetCount = 10;
 			DCCpacket.data[0] = 0x00;
 			DCCpacket.data[1] = 0x00;
 			DCCpacket.data[2] = 0x00;
 			DCCpacket.packetLen = 3;
-			m_cv.state = PG_PG_WRITE;
+			m_sm.state = PG_PG_WRITE;
 			break;
 
 		case PG_PG_WRITE:
-			m_cv.packetCount = 6;
+			m_sm.packetCount = 6;
 			/* 5 or writes to page register
 			 * long-preamble 0 0111CRRR 0 DDDDDDDD 0 EEEEEEEE 1
 			 * C=1 for write RRR=101 for page*/
 			DCCpacket.data[0] = 0b01111101;
-			DCCpacket.data[1] = m_cv.pgPage;
+			DCCpacket.data[1] = m_sm.pgPage;
 			DCCpacket.data[2] = DCCpacket.data[0] ^ DCCpacket.data[1];
-			m_cv.state = PG_RESET;
+			m_sm.state = PG_RESET;
 			break;
 
 		case PG_RESET:
 			/*6 or more reset packets*/
-			m_cv.packetCount = 10;
+			m_sm.packetCount = 10;
 			DCCpacket.data[0] = 0x00;
 			DCCpacket.data[1] = 0x00;
 			DCCpacket.data[2] = 0x00;
-			m_cv.state = PG_WRITE;
+			m_sm.state = PG_WRITE;
 			break;
 
 		case PG_WRITE:
 			/*5 or more writes to data register 1-4*/
-			m_cv.packetCount = 6;
-			DCCpacket.data[0] = m_cv.pgReg | 0b01111000;
-			DCCpacket.data[1] = m_cv.cvData;
+			m_sm.packetCount = 6;
+			DCCpacket.data[0] = m_sm.pgReg | 0b01111000;
+			DCCpacket.data[1] = m_sm.cvData;
 			DCCpacket.data[2] = DCCpacket.data[0] ^ DCCpacket.data[1];
-			m_cv.state = PG_RESET_2;
+			m_sm.state = PG_RESET_2;
 			break;
 
 		case PG_RESET_2:
 			/* 10 reset packets */
-			m_cv.packetCount = 10;
+			m_sm.packetCount = 10;
 			DCCpacket.data[0] = 0x00;
 			DCCpacket.data[1] = 0x00;
 			DCCpacket.data[2] = 0x00;
-			m_cv.state = CV_IDLE;
+			m_sm.state = CV_IDLE;
 			break;
 
 		case D_START:
-			/*DIRECT MODE para 100.  3 or more reset packets*/
+			/*DIRECT MODE para 100.  3 or more reset packets
+			* Para 55 of s-9.2.3, for write, ACK should not occur before until data-storage is complete. Controller should scan
+			* for ACK window starting at end of second service mode instruction packet and through the required number of instruction packets and through
+			* the recovery time.   
+			* 
+			* So... 		
+			*/
 			DCCpacket.longPreamble = true;
-			m_cv.packetCount = 10;
+			m_sm.packetCount = 10;
 			DCCpacket.data[0] = 0x00;
 			DCCpacket.data[1] = 0x00;
 			DCCpacket.data[2] = 0x00;
 			DCCpacket.packetLen = 3;
-			m_cv.state = D_WRITE;
+			m_sm.state = D_WRITE;
 			break;
 
 		case D_WRITE:
-			/*5 or more writes*/
-			m_cv.packetCount = 6;
+			/*5 or more writes
+			* in theory we could start looking for ACK immediately after 2nd write, but since the same is a one time thing
+			* this seems to be too soon. So we will only start looking during d_reset
+			*/
+			m_sm.packetCount = 6;
 			/*Long-preamble 0 0111CCAA 0 AAAAAAAA 0 DDDDDDDD 0 EEEEEEEE 1
 			 *CC=11 for byte write S9.2.3 para 110
 			 *the CV target AAAAAAAAAA target is 0 for CV1, etc
 			 */
-			DCCpacket.data[0] = ((m_cv.cvReg - 1) >> 8) | 0b01111100;
-			DCCpacket.data[1] = (m_cv.cvReg - 1) & 0xFF;
-			DCCpacket.data[2] = m_cv.cvData;
+			DCCpacket.data[0] = ((m_sm.cvReg - 1) >> 8) | 0b01111100;
+			DCCpacket.data[1] = (m_sm.cvReg - 1) & 0xFF;
+			DCCpacket.data[2] = m_sm.cvData;
 			DCCpacket.data[3] = DCCpacket.data[0] ^ DCCpacket.data[1] ^ DCCpacket.data[2];
 			DCCpacket.packetLen = 4;
-			m_cv.state = D_RESET;
-			ina219Mode(false);  //start looking for ACK pulse
+			m_sm.state = D_RESET;
+			//take baseline ref samples now, ahead of triggering a one-shot sample
+			power.ackBase_mA = power.bus_mA;
+			power.bus_peak_mA = power.ackBase_mA;
 			break;
 
 		case D_RESET:
-			/*6 or more write or reset packets.  This is the decoder recovery time*/
-			m_cv.packetCount = 10;
+			/*6 or more write or reset packets.  This is the decoder recovery time
+			* change to trigger mode and take one sample.  We assume the ACK pulse happens during 
+			* the reset period
+			*/
+			ina219Mode(false);
+			m_sm.packetCount = 10;
 			DCCpacket.data[0] = 0x00;
 			DCCpacket.data[1] = 0x00;
 			DCCpacket.data[2] = 0x00;
 			DCCpacket.packetLen = 3;
-			m_cv.state = D_ACK;
-			//2025-11-21 want to return to average mode but not until all the packets have been sent.
-			//ina219Mode(true);
-			//AND we need to sample the ackFlag just prior to entering idle, so we prob need another state
-
+			m_sm.state = D_ACK;
+		
 			break;
 
 		case D_ACK:
@@ -827,9 +839,11 @@ sent out*/
 #endif		
 
 			//revert to average mode, and invoke a callback
+			//2026-01-06 BUG. we see ACK after one write, but then any subsequent read fails unless you exit SM entirely and re-enter. why?
+			
 			ina219Mode(true); 
-			if (LocoNetcallbackPtr) LocoNetcallbackPtr(power.ackFlag,m_cv.cvReg,m_cv.cvData);
-			m_cv.state = CV_IDLE;
+			if (LocoNetcallbackPtr) LocoNetcallbackPtr(power.ackFlag,m_sm.cvReg,m_sm.cvData);
+			m_sm.state = CV_IDLE;
 			break;
 
 		case CV_IDLE:
@@ -847,41 +861,44 @@ sent out*/
 			/*DIRECT MODE para 100.  3 or more reset packets*/
 
 			DCCpacket.longPreamble = true;
-			m_cv.packetCount = 10;
+			m_sm.packetCount = 10;
 			DCCpacket.data[0] = 0x00;
 			DCCpacket.data[1] = 0x00;
 			DCCpacket.data[2] = 0x00;
 			DCCpacket.packetLen = 3;
-			m_cv.state = RD_VERIFY;
+			m_sm.state = RD_VERIFY;
+			//2026-01-06 bug fix; set up entry conditions, including capturing the bus current
+			power.ackBase_mA = power.bus_mA;
+			power.bus_peak_mA = power.ackBase_mA;
 			break;
 
 		case RD_VERIFY:  //RD_command
 			/*5 or more verifies*/
-			m_cv.packetCount = 6;
+			m_sm.packetCount = 6;
 			/*Long-preamble 0 011110AA 0 AAAAAAAA 0 111KDBBB 0 EEEEEEEE 1
 			Where BBB represents the bit position within the CV (000 being defined as bit 0)
 			and D contains the value of the bit to be verified or written, K=1 write-bit
 			K=0 is verify bit. see S9.2.3 para 130
 			the CV target AAAAAAAAAA target is 0 for CV1, etc
 			 */
-			if (m_cv.bitCount >= 0) {
-				DCCpacket.data[0] = ((m_cv.cvReg - 1) >> 8) | 0b01111000;
-				DCCpacket.data[1] = (m_cv.cvReg - 1) & 0xFF;
-				DCCpacket.data[2] = 0b11101000 | (m_cv.bitCount & 0b111);
+			if (m_sm.bitCount >= 0) {
+				DCCpacket.data[0] = ((m_sm.cvReg - 1) >> 8) | 0b01111000;
+				DCCpacket.data[1] = (m_sm.cvReg - 1) & 0xFF;
+				DCCpacket.data[2] = 0b11101000 | (m_sm.bitCount & 0b111);
 				DCCpacket.data[3] = DCCpacket.data[0] ^ DCCpacket.data[1] ^ DCCpacket.data[2];
 				DCCpacket.packetLen = 4;
-				m_cv.state = RD_RESET;
+				m_sm.state = RD_RESET;
 			}
 			else {
 				/*byte verify the data we pulled bitwise earlier
 				Long-preamble 0 0111CCAA 0 AAAAAAAA 0 DDDDDDDD 0 EEEEEEEE 1
 				CC=01 Verify byte	*/
-				DCCpacket.data[0] = ((m_cv.cvReg - 1) >> 8) | 0b01110100;
-				DCCpacket.data[1] = (m_cv.cvReg - 1) & 0xFF;
-				DCCpacket.data[2] = (m_cv.cvData & 0xFF);
+				DCCpacket.data[0] = ((m_sm.cvReg - 1) >> 8) | 0b01110100;
+				DCCpacket.data[1] = (m_sm.cvReg - 1) & 0xFF;
+				DCCpacket.data[2] = (m_sm.cvData & 0xFF);
 				DCCpacket.data[3] = DCCpacket.data[0] ^ DCCpacket.data[1] ^ DCCpacket.data[2];
 				DCCpacket.packetLen = 4;
-				m_cv.state = RD_RESET;
+				m_sm.state = RD_RESET;
 			}
 			//start looking for ACK pulse. Per the S-9.2.3 para 55, this can occur anytime from the second command packet
 			//onward to end of recovery time.
@@ -892,12 +909,12 @@ sent out*/
 		case RD_RESET:
 			/*6 or more reset packets, during which we look for the ACK pulse.  This should occur
 			within the 50mS it takes to issue reset packets. Might it happen sooner during RD_VERIFY?*/
-			m_cv.packetCount = 8;
+			m_sm.packetCount = 8;
 			DCCpacket.data[0] = 0x00;
 			DCCpacket.data[1] = 0x00;
 			DCCpacket.data[2] = 0x00;
 			DCCpacket.packetLen = 3;
-			m_cv.state = RD_FINAL;
+			m_sm.state = RD_FINAL;
 			break;
 
 		case RD_FINAL:
@@ -910,27 +927,27 @@ sent out*/
 			power.ackFlag = ((ina219.getCurrent_mA() - power.ackBase_mA) > 20) ? true : false;
 #endif			
 			//read the ack pulse as sampled, 80mS+ will have passed since RD_RESET entered
-			if (m_cv.bitCount >= 0) {
+			if (m_sm.bitCount >= 0) {
 				//bits 7 thro to 1
-				m_cv.cvData = m_cv.cvData << 1;
-				if (power.ackFlag) { m_cv.cvData++; }
-				m_cv.bitCount--;
-				m_cv.state = RD_START;
+				m_sm.cvData = m_sm.cvData << 1;
+				if (power.ackFlag) { m_sm.cvData++; }
+				m_sm.bitCount--;
+				m_sm.state = RD_START;
 				//note, if we exit -1 then loop will do a byte verify text next
 				break;
 			}
 			else {
 				//arrive here with -1 and ackFlag true if we have correctly pulled the whole byte
 				if (power.ackFlag) {
-					m_cv.cvData &= 0xFF;
+					m_sm.cvData &= 0xFF;
 					trace(Serial.println(F("verify good"));)
 				}
 				else
 				{//byte verify failed, indicate we have unknown value
-					trace(Serial.printf("verify fail %d \n\r", m_cv.cvData);)
-						m_cv.cvData = -1;
+					trace(Serial.printf("verify fail %d \n\r", m_sm.cvData);)
+						m_sm.cvData = -1;
 				}
-				m_cv.state = CV_IDLE;
+				m_sm.state = CV_IDLE;
 				//exit with _cv.bitCount still at -1
 				//revert to averaging mode
 				ina219Mode(true);
@@ -939,12 +956,12 @@ sent out*/
 				//unless we code as a timeout elsewhere
 				updateServiceModeDisplay();
 				//2020-12-23 call DCCweb to send a read result over the websocket
-				trace(Serial.printf("reg %d val %d\n\r", m_cv.cvReg, m_cv.cvData);)
-				nsDCCweb::broadcastSMreadResult(m_cv.cvReg, m_cv.cvData);
+				trace(Serial.printf("reg %d val %d\n\r", m_sm.cvReg, m_sm.cvData);)
+				nsDCCweb::broadcastSMreadResult(m_sm.cvReg, m_sm.cvData);
 				
 				
 				//2025-11-20 more elegant, invoke the callback function which was passed to writeSM
-				if (LocoNetcallbackPtr) LocoNetcallbackPtr(power.ackFlag,m_cv.cvReg,m_cv.cvData);
+				if (LocoNetcallbackPtr) LocoNetcallbackPtr(power.ackFlag,m_sm.cvReg,m_sm.cvData);
 
 			}
 			
@@ -1242,73 +1259,73 @@ bool setServiceModefromKey(void) {
 	if (keypad.keyHeld) { return false; }
 	if (keypad.keyASCII >= '0' && keypad.keyASCII <= '9') {
 		//write digit pos and advance
-		uint16_t d = m_cv.cvReg;
-		if (m_cv.digit < 4) {
-			changeDigit(keypad.keyASCII, 3 - m_cv.digit, &d);
-			m_cv.cvReg = d;
-			if (m_cv.cvReg > 1024) { m_cv.cvReg = 1024; }
-			if (m_cv.cvReg == 0) { m_cv.cvReg = 1; }
+		uint16_t d = m_sm.cvReg;
+		if (m_sm.digit < 4) {
+			changeDigit(keypad.keyASCII, 3 - m_sm.digit, &d);
+			m_sm.cvReg = d;
+			if (m_sm.cvReg > 1024) { m_sm.cvReg = 1024; }
+			if (m_sm.cvReg == 0) { m_sm.cvReg = 1; }
 		}
 		else {
 			/*2019-12-01 cvData==-1 if not valid from a verify*/
-			if (m_cv.cvData == -1) {
+			if (m_sm.cvData == -1) {
 				d = 0;
 			}
 			else {
-				d = m_cv.cvData;
+				d = m_sm.cvData;
 			}
-			changeDigit(keypad.keyASCII, 6 - m_cv.digit, &d);
-			m_cv.cvData = d;
-			if (m_cv.cvData > 255) { m_cv.cvData = 255; }
+			changeDigit(keypad.keyASCII, 6 - m_sm.digit, &d);
+			m_sm.cvData = d;
+			if (m_sm.cvData > 255) { m_sm.cvData = 255; }
 		}
 
 
 		/*increment digit position but do not wrap*/
-		m_cv.digit += m_cv.digit < 6 ? 1 : 0;
+		m_sm.digit += m_sm.digit < 6 ? 1 : 0;
 		/*update page and reg*/
-		int v = m_cv.cvReg - 1;
-		m_cv.pgPage = v / 4 + 1;
-		m_cv.pgReg = v % 4;
+		int v = m_sm.cvReg - 1;
+		m_sm.pgPage = v / 4 + 1;
+		m_sm.pgReg = v % 4;
 		return true;
 
 
 	}
 	if (keypad.keyASCII == '*') {
-		m_cv.digit -= m_cv.digit > 0 ? 1 : 0;
+		m_sm.digit -= m_sm.digit > 0 ? 1 : 0;
 	}
 	if (keypad.keyASCII == '#') {
-		m_cv.digit += m_cv.digit < 6 ? 1 : 0;
+		m_sm.digit += m_sm.digit < 6 ? 1 : 0;
 	}
 
 
 	/*Direct write byte*/
 	if (keypad.keyASCII == 'D') {
-		if (m_cv.cvData < 0) { return true; }
+		if (m_sm.cvData < 0) { return true; }
 		dccSE = DCC_SERVICE;
-		m_cv.timeout = 8;  //2 sec
-		m_cv.state = D_START;
+		m_sm.timeout = 8;  //2 sec
+		m_sm.state = D_START;
 	}
 
 	/*Page write byte*/
 	if (keypad.keyASCII == 'C') {
-		if (m_cv.cvData < 0) { return true; }
+		if (m_sm.cvData < 0) { return true; }
 		dccSE = DCC_SERVICE;
-		m_cv.timeout = 8;  //2 sec
-		m_cv.state = PG_START;
+		m_sm.timeout = 8;  //2 sec
+		m_sm.state = PG_START;
 	}
 
-	/*Read bits using direct mode*/
+	/*Read byte using direct mode*/
 	if (keypad.keyASCII == 'A') {
 		dccSE = DCC_SERVICE;
-		m_cv.timeout = 8;  //2 sec
+		m_sm.timeout = 8;  //2 sec
 		/*set up entry conditions, including capturing the bus current*/
 		power.ackBase_mA = power.bus_mA;
 		power.bus_peak_mA = power.ackBase_mA;
 		//change to trigger mode and take one sample to initialise the ina
 		ina219Mode(false);
-		m_cv.state = RD_START;
-		m_cv.bitCount = 7;
-		m_cv.cvData = 0;
+		m_sm.state = RD_START;
+		m_sm.bitCount = 7;
+		m_sm.cvData = 0;
 		return false;
 	}
 
@@ -1364,70 +1381,114 @@ void setPowerFromKey(void) {
 /// <param name="data"></param>
 /// <param name="callback"></param>
 /// <returns>false if operation unsupported</returns>
-bool setPOMfromLoconet(uint8_t PCMD, uint16_t addr, uint16_t cv, uint8_t data, void (*callback)(bool, uint16_t, uint8_t)) {
+bool sendPCMDfromLoconet(uint8_t PCMD, uint16_t addr, uint16_t cv, uint8_t data, void (*callback)(bool, uint16_t, uint8_t)) {
 	//2026-01-01 if we have been given a callback address, then ACK is expected.  S-9.3.2 states ACK|NACK|BUSY is only seen on write operations
 	//copy the callback function pointer to a static var for use later in the DCCpacketEngine
 	
 	//LocoNet specification fails to cover how bit operation on POM are acheived.  Potentially its encoded in the data value, e.g. 
 	LocoNetcallbackPtr = callback;
-	if ((PCMD & 0b100) == 0) return false;  //not ops mode
+	if ((PCMD & 0b100) != 0) {
+		//POM block
 
-	m_pom.useAccessoryAddr = false;
-	m_pom.address = addr;
-	m_pom.useLongAddr = addr > 127 ? true : false;
-	m_pom.cvReg = cv+1;  //m_pom is one-based
-	m_pom.cvData = data;
-	m_pom.readSuccess = false;
+		m_pom.useAccessoryAddr = false;
+		m_pom.address = addr;
+		m_pom.useLongAddr = addr > 127 ? true : false;
+		m_pom.cvReg = cv + 1;  //m_pom is one-based
+		m_pom.cvData = data;
+		m_pom.readSuccess = false;
 
-	if (m_pom.address > 10239) { m_pom.address = 10239; }
-	if (m_pom.cvReg > 1024) { m_pom.address = 1024; }
+		if (m_pom.address > 10239) { m_pom.address = 10239; }
+		if (m_pom.cvReg > 1024) { m_pom.address = 1024; }
 
-	//what kind of POM operation do we need?
-	//<6>=write/read <5>=byte/bit <3>=TY1 = feedback/no feedback
-	m_pom.expectACK = (PCMD & 0b1000) == 0 ? 0 : 1;
+		//what kind of POM operation do we need?
+		//<6>=write/read <5>=byte/bit <3>=TY1 = feedback/no feedback
+		m_pom.expectACK = (PCMD & 0b1000) == 0 ? 0 : 1;
 
-	//[EF 0E 7C 2F 00 01 54 00 00 00 00 7F 7F 18]  Byte Read on Main Track (Ops Mode): Decoder address 212: CV1.
-	// [EF 0E 7C 67 00 01 54 00 00 01 03 7F 7F 52] Byte Write(No feedback) on Main Track : Decoder address 212 : CV2 value 3 (0x03, 00000011b).
-	//2f=00101111
-	//67=01100111
-	//yeah but despite DP stating no feedback, it still expects feedback as in a full E7 response rathr than blind no E7 
+		//[EF 0E 7C 2F 00 01 54 00 00 00 00 7F 7F 18]  Byte Read on Main Track (Ops Mode): Decoder address 212: CV1.
+		// [EF 0E 7C 67 00 01 54 00 00 01 03 7F 7F 52] Byte Write(No feedback) on Main Track : Decoder address 212 : CV2 value 3 (0x03, 00000011b).
+		//2f=00101111
+		//67=01100111
+		//yeah but despite DP stating no feedback, it still expects feedback as in a full E7 response rathr than blind no E7 
 
 
-	if ((PCMD & 0b1000000) == 0){
-		//read
-		if ((PCMD & 0b100000) != 0){
-		//byte
-			m_pom.state = POM_BYTE_READ;
-			dccSE = DCC_POM;  //initiate sequence
-			m_pom.timeout = 8; //2 sec and then display will update
-			updatePOMdisplay();
-			nsWiThrottle::queueMessage("spfl rd\n", "DEBUG"); //debug
+		if ((PCMD & 0b1000000) == 0) {
+			//read
+			if ((PCMD & 0b100000) != 0) {
+				//byte
+				m_pom.state = POM_BYTE_READ;
+				dccSE = DCC_POM;  //initiate sequence
+				m_pom.timeout = 8; //2 sec and then display will update
+				updatePOMdisplay();
+				return true;
+			}
+			else {
+				//bit. not supported
+				return false;
+			}
 
-			return true;
 		}
 		else {
-			//bit. not supported
+			//write
+			if ((PCMD & 0b100000) != 0) {
+				//byte
+				m_pom.state = POM_BYTE_WRITE;
+				dccSE = DCC_POM;  //initiate write sequence
+				m_pom.timeout = 8;
+				updatePOMdisplay();
+				return true;
+			}
+			//bit, not supported.
 			return false;
-		}
 
-	}
-	else {
-		//write
-		if ((PCMD & 0b100000) != 0) {
-			//byte
-			m_pom.state = POM_BYTE_WRITE;
-			dccSE = DCC_POM;  //initiate write sequence
-			m_pom.timeout = 8;
-			nsWiThrottle::queueMessage("spfl wr\n", "DEBUG"); //debug
-
-			updatePOMdisplay();
-			return true;
 		}
-		//bit, not supported.
 		return false;
-				
+
+	}//end POM
+	
+	//SM routines, it is assumed we entered service mode previously
+	//what kind of SM operation do we need?
+	//<6>=write/read <5>=byte/bit <4,3>=TY1,0 = page mode ,direct, register
+	m_sm.cvData = data;
+	m_sm.cvReg = cv+1;  //cv values from loconet are base zero.
+	//address is not relevant
+	
+	//bit operations are not supported, nor are page mode
+	if ((PCMD & 0b100000) == 0) return false;
+	
+	//deal with page or direct modes only
+	switch (PCMD & 0b1011000) {
+	case 0b1000000:  //page mode write
+		return false;
+	case 0x00: //page mode read
+		return false;
+	case 0b1001000:  //direct mode write
+		dccSE = DCC_SERVICE;
+		m_sm.timeout = 8;  //2 sec
+		m_sm.state = D_START;
+		return true;
+
+	case 0b0001000:  //direct mode read
+		dccSE = DCC_SERVICE;
+		m_sm.timeout = 8;  //2 sec
+		//set up entry conditions, including capturing the bus current
+		power.ackBase_mA = power.bus_mA;
+		power.bus_peak_mA = power.ackBase_mA;
+		//change to trigger mode and take one sample to initialise the INA
+		ina219Mode(false);
+		m_sm.state = RD_START;
+		m_sm.bitCount = 7;
+		m_sm.cvData = 0;
+		return true;
+
+	default:
+		return false;
+		
 	}
+
+
+
 	return false;
+
 }
 
 
@@ -1435,6 +1496,7 @@ bool setPOMfromLoconet(uint8_t PCMD, uint16_t addr, uint16_t cv, uint8_t data, v
 void setPOMfromKey(void) {
 	//default action is to re-enable numeric/bit display
 	//it is only set to ??? when a read is intiated
+	LocoNetcallbackPtr = nullptr;
 	m_pom.readSuccess = true;
 
 	switch (keypad.keyASCII) {
@@ -1955,8 +2017,6 @@ void updateUNIdisplay() {
 			//LOC:003
 			lcd.setCursor(6 - unithrottle.digitPos, 0);
 		}
-		//	Serial.println("\n++blink++\n\n");
-			//lcd.cursor();
 		lcd.blink();
 	}
 
@@ -1971,20 +2031,7 @@ void updateTurnoutDisplay(void) {
 	uint8_t i;
 	char temp[20];
 	lcd.home();
-	/* old version
-	for (i = 0;i < 8;i++) {
-		if (turnout[i].thrown) {
-			sprintf(temp, "%02d/ ", turnout[i].address);
-		}
-		else {
-			sprintf(temp, "%02d| ", turnout[i].address);
-		}
-		lcd.print(temp);
-		//advance to next row
-		if (i == 3) { lcd.setCursor(0, 1); }  //col,row
-	}
-	*/
-
+	
 	for (i = 0; i < 8; i++) {
 		//any address over 100 will be shown as hex, any address over 255 will be shown as XX
 		if (turnout[i].address > 0xFF) {
@@ -2053,7 +2100,7 @@ void updateTurnoutDisplay(void) {
 void updateServiceModeDisplay(void) {
 	lcd.home();
 	char buffer[20];
-	switch (m_cv.state) {
+	switch (m_sm.state) {
 	case CV_IDLE:
 		lcd.print("Cv   Val  Pg Rg ");
 		break;
@@ -2067,21 +2114,21 @@ void updateServiceModeDisplay(void) {
 
 	lcd.setCursor(0, 1);
 	/*2019-12-01 if data==-1 then display ??? as its not valid*/
-	if (m_cv.cvData >= 0) {
-		sprintf(buffer, "%04d-%03d  %03d/%02d", m_cv.cvReg, m_cv.cvData, m_cv.pgPage, m_cv.pgReg);
+	if (m_sm.cvData >= 0) {
+		sprintf(buffer, "%04d-%03d  %03d/%02d", m_sm.cvReg, m_sm.cvData, m_sm.pgPage, m_sm.pgReg);
 		//0000-000  00/00
 	}
 	else {
 		//failed read of cv values
-		sprintf(buffer, "%04d-???  failed", m_cv.cvReg);
+		sprintf(buffer, "%04d-???  failed", m_sm.cvReg);
 	}
 	lcd.print(buffer);
 
 	/*set active digit*/
-	if (m_cv.digit < 4) {
-		lcd.setCursor(m_cv.digit, 1);
+	if (m_sm.digit < 4) {
+		lcd.setCursor(m_sm.digit, 1);
 	}//col,row
-	else { lcd.setCursor(m_cv.digit + 1, 1); }
+	else { lcd.setCursor(m_sm.digit + 1, 1); }
 	lcd.blink();
 }
 
@@ -2832,9 +2879,7 @@ int8_t DCCcore(void) {
 			case M_SERVICE:
 				if (keypad.keyHeld) { break; }
 				if (keypad.key == KEY_MODE) {
-					dccSE = DCC_LOCO;  //return to loco packet transmission
-
-					m_machineSE = M_UNI_RUN;
+					writeServiceCommand(0, 0, true, false, true, nullptr); //wank
 					updateUNIdisplay();
 				}
 				else {
@@ -2845,12 +2890,11 @@ int8_t DCCcore(void) {
 				break;
 
 			case M_ESTOP:
-				//2019-11-18 if mode-short then enter CV service mode, if mode-long then enter Power settings
+				//2019-11-18 if mode-short then enter service mode, if mode-long then enter Power settings
 				//key-release (i.e. less than Mode-hold-period) will take us to Service Mode
 				if (keypad.key == 0) {
 					//cv control is entered whilst eStop active
-					m_machineSE = M_SERVICE;
-					m_stateLED = L_SERVICE;
+					writeServiceCommand(0, 0, true, true, false, nullptr); 
 					updateServiceModeDisplay();
 					break;
 				}
@@ -2953,9 +2997,9 @@ int8_t DCCcore(void) {
 			}
 
 			//countdown cv timeout. repaint display as we hit zero
-			if (m_cv.timeout > 0) {
-				m_cv.timeout--;
-				if (m_cv.timeout == 0) { updateServiceModeDisplay(); }
+			if (m_sm.timeout > 0) {
+				m_sm.timeout--;
+				if (m_sm.timeout == 0) { updateServiceModeDisplay(); }
 			}
 			//countdown POM timeout. repaint display as we hit zero
 			if (m_pom.timeout > 0) {
@@ -3122,7 +3166,7 @@ int8_t DCCcore(void) {
 
 
 /// <summary>
-/// sets INA current monitoring in average mode or trigger mode (for ACK pulse in service mode)
+/// sets INA current monitoring in average mode or trigger mode (one time 68mS sample for ACK pulse in service mode)
 /// </summary>
 /// <param name="AverageMode">false will search for ACK pulse in Service Mode</param>
 void ina219Mode(boolean AverageMode) {
@@ -3374,13 +3418,7 @@ bool writePOMcommand(const char* address, uint16_t cv, const char* val) {
 	
 	if (address == nullptr) return false;
 	if (val == nullptr) return false;
-
-	nsWiThrottle::queueMessage(address, "DEBUG");  //DEBUG
-	nsWiThrottle::queueMessage(" wpc \n", "DEBUG");  //DEBUG
-	nsWiThrottle::queueMessage(val, "DEBUG");  //DEBUG
-	nsWiThrottle::queueMessage( "wpcv\n", "DEBUG");  //DEBUG
-
-
+		
 	m_pom.useLongAddr = address[0] == 'L' ? true : false;
 	m_pom.address = atoi(address + 1);
 	if (m_pom.address == 0) return false;
@@ -3459,7 +3497,7 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM,
 		//idle being sent to line and a 250mA current limit which we might trip if several locos were running at
 		//the point we switched to SM
 		dccSE = DCC_SERVICE;
-		m_cv.state = CV_IDLE;
+		m_sm.state = CV_IDLE;
 		power.serviceMode = true;
 
 		//for the local hardware UI to at least display the mode
@@ -3477,7 +3515,7 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM,
 	}
 
 	//2025-11-21 check the programmer is not busy and that the unit is in service mode
-	if (m_cv.state != CV_IDLE) return false;
+	if (m_sm.state != CV_IDLE) return false;
 	if (!power.serviceMode) return false;
 
 
@@ -3486,16 +3524,19 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM,
 
 		if (cvReg > 1024)return false;
 		//for service mode, cv is display location, i.e. 1 to 1024
-		m_cv.cvReg = cvReg;
+		m_sm.cvReg = cvReg;
 		/*update page and reg*/
-		int v = m_cv.cvReg - 1;
-		m_cv.pgPage = v / 4 + 1;
-		m_cv.pgReg = v % 4;
-		m_cv.cvData = cvVal;
-		if (m_cv.cvData < 0) { return false; }
+		int v = m_sm.cvReg - 1;
+		m_sm.pgPage = v / 4 + 1;
+		m_sm.pgReg = v % 4;
+		m_sm.cvData = cvVal;
+		if (m_sm.cvData < 0) { return false; }
 		dccSE = DCC_SERVICE;
-		m_cv.timeout = 8;  //2 sec
-		m_cv.state = D_START;
+		m_sm.timeout = 8;  //2 sec
+		m_sm.state = D_START;
+		
+
+
 		return true;
 		//after processing the machine reverts to m_cv.state=CV_IDLE
 
@@ -3507,18 +3548,18 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM,
 		//after processing the machine reverts to m_cv.state=CV_IDLE
 
 		//free to read?
-		if (m_cv.state != CV_IDLE) return false;
+		if (m_sm.state != CV_IDLE) return false;
 		//initate a read
-		m_cv.timeout = 8;  //2 sec
+		m_sm.timeout = 8;  //2 sec
 		//set up entry conditions, including capturing the bus current
 		power.ackBase_mA = power.bus_mA;
 		power.bus_peak_mA = power.ackBase_mA;
 		//change to trigger mode and take one sample to initialise the ina
 		ina219Mode(false);
-		m_cv.state = RD_START;
-		m_cv.bitCount = 7;
-		m_cv.cvReg = cvReg;
-		m_cv.cvData = 0;
+		m_sm.state = RD_START;
+		m_sm.bitCount = 7;
+		m_sm.cvReg = cvReg;
+		m_sm.cvData = 0;
 		return true;
 	};
 	return false;
@@ -3529,7 +3570,7 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM,
 /// </summary>
 /// <returns>true if busy</returns>
 bool ServiceModeBusy(void) {
-	if (m_cv.state != CV_IDLE) return true;
+	if (m_sm.state != CV_IDLE) return true;
 	return false;
 }
 

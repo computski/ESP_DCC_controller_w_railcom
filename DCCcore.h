@@ -163,7 +163,7 @@ enum cvSTATE
 	RD_FINAL
 };
 
-struct CV {
+struct SM {
 	int8_t digit;
 	bool read;
 	bool write;
@@ -227,7 +227,7 @@ bool writePOMcommand(const char* address, uint16_t cv, const char* val);
 bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM, bool exitSM,void(*callback)(bool,uint16_t,uint8_t)); 
 bool ServiceModeBusy(void);
 void railcomCallback(uint8_t result, uint8_t ctrl, bool success);
-bool setPOMfromLoconet(uint8_t PCMD, uint16_t addr, uint16_t cv, uint8_t data, void (*callback)(bool, uint16_t, uint8_t));
+bool sendPCMDfromLoconet(uint8_t PCMD, uint16_t addr, uint16_t cv, uint8_t data, void (*callback)(bool, uint16_t, uint8_t));
 void updatePOMdisplay();
 
 //debug
