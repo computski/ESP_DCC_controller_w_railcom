@@ -1,4 +1,6 @@
 # ESP_DCC_controller_w_railcom
+2026-01-06 this version has problems with SM ACK detection
+
 PRODUCTION. ESP 8266 DCC controller with railcom support. Uses most of the codebase from the ESP_DCC_controller project, but this project additionally supports a railcom cutout on the controller i.e. takes both X and Y to ground (or both 12v) during a railcom cutout slot that appears after every loco packet sent to line.   A railcom decoder will assert its data during the railcom cutout, and this is detected by dedicated hardware based around an LM319.  This data is feed to the ESP hardware UART and is gated-in during the cutout period via a railcom sync signal to a 6n317 opto isolator.  The UART operates at 250kbs.  I have designed a custom PCB for this project.
 
 Now moved to ArduinoJson v7.0.4
