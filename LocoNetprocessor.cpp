@@ -203,7 +203,7 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 			power.trackPower = false;
 			nsWiThrottle::queueMessage("pwr off\n","DEBUG");
 			//exit service mode if we are in this
-			writeServiceCommand(0, 0, false, false, true, nullptr);
+			writeServiceCommand(0, 0, false, false, true);
 			nsWiThrottle::queueMessage("exit sm\n", "DEBUG");
 		}
 		return;
@@ -397,15 +397,13 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 
 			if ((tokens[3] & 0b100) == 0){
 				//SERVICE MODE
-				writeServiceCommand(0, 0, true, true, false, nullptr);
-
+		
 				if (ServiceModeBusy()) {  //this is a function call to DCCcore
 					queueMessage("RECEIVE 0xB4 0x7F 0x00 0x34\n", client);  //LACK and busy
 					return;
 				}
-
-	
-				if (sendPCMDfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, &asyncLocoNet)) {
+					
+				if (actionPCMDfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, &asyncLocoNet)) {
 					//read requested, E7 response is via an asynchronous callback
 					queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
 				}
@@ -429,7 +427,7 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 					//queueMessage("RECEIVE 0xB4 0x6F 0x40 0x64\n", client); but this is not recognised by DP either
 
 
-					sendPCMDfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, nullptr);
+					actionPCMDfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, nullptr);
 					slot124Message.PSTAT = 0x00; //no write ack from decoder 0b10, because you didn't ask for one!
 					writeProgrammerTaskFinalReply();
 				
@@ -437,7 +435,7 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 					//Instead it expects an E7 response and bitches if this carries no ACK, even though this is what it asked for.
 					//So we can either fake an ACK or actually test for one.
 
-				}else if (sendPCMDfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, &asyncLocoNet)) {
+				}else if (actionPCMDfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, &asyncLocoNet)) {
 					queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
 				}
 				else{
@@ -542,13 +540,13 @@ void nsLOCONETprocessor::writeProgrammerTaskFinalReply(void) {
 /// </summary>
 /// <param name="ack">true if ACK seen, meaning data was read/written correctly</param>
 /// <param name="cvVal">cv data</param>
-void nsLOCONETprocessor::asyncLocoNet(bool ack, uint16_t cv, uint8_t cvVal) {
-	//I don't think we use the cv parameter, the call originates with sendPCMDfromLoconet() and we have already stored cv in slot124message object
+void nsLOCONETprocessor::asyncLocoNet(bool ack, uint8_t cvVal) {
+	//The call originates with sendPCMDfromLoconet() and we have already stored cv in slot124message object
 	//slot124 knows whether it was a POM or SM call, this routine does not.
 
 	char buf[12];
 	if (ack) {
-		snprintf(buf, 12, "cBAK %d\n ", cvVal);
+		snprintf(buf, 12, "cACK %d\n ", cvVal);
 	}
 	else {
 		snprintf(buf, 12, "cBAD %d\n ", cvVal);
@@ -621,13 +619,6 @@ void* nsLOCONETprocessor:: getSytemSlotPtr(uint8_t locoNetSlot) {
 	return &loco[locoNetSlot-1];
 }
 
-
-
-/*
-std::string nsLOCONETprocessor::echoRequest(std::vector<std::uint8_t> tokens) {
-	return "X";
-}
-*/
 
 /// <summary>
 /// generate a string containing OPC_SL_RD_DATA response

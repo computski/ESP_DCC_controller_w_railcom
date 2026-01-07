@@ -54,7 +54,7 @@ struct POWER
 	uint16_t current;
 	bool  serviceMode;
 	bool  trackPower;
-	bool  report = true;  //set false for debug
+	bool  averaging = true;  //used in conjunction with service mode
 	/*these are internal working registers*/
 	int ADresult;   //native units
 	/*these are results, populated either from INA or AD system*/
@@ -163,7 +163,7 @@ enum cvSTATE
 	RD_FINAL
 };
 
-struct SM {
+struct CV {
 	int8_t digit;
 	bool read;
 	bool write;
@@ -224,10 +224,10 @@ void dccGetSettings();
 void replicateAcrossConsist(int8_t slot);
 void dccPutSettings();
 bool writePOMcommand(const char* address, uint16_t cv, const char* val);
-bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM, bool exitSM,void(*callback)(bool,uint16_t,uint8_t)); 
+bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM, bool exitSM); 
 bool ServiceModeBusy(void);
 void railcomCallback(uint8_t result, uint8_t ctrl, bool success);
-bool sendPCMDfromLoconet(uint8_t PCMD, uint16_t addr, uint16_t cv, uint8_t data, void (*callback)(bool, uint16_t, uint8_t));
+bool actionPCMDfromLoconet(uint8_t PCMD, uint16_t addr, uint16_t cv, uint8_t data, void (*callback)(bool, uint8_t));
 void updatePOMdisplay();
 
 //debug
