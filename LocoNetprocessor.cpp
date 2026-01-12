@@ -398,11 +398,15 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 			if ((tokens[3] & 0b100) == 0){
 				//SERVICE MODE
 		
+				//Note DP does not respond to these B4 messages.  e.g. stating operation not supported is ignored and insted we have a comms timeout.
+				//If you follow the message with writeProgrammerTaskFinalReply() then DP thinks the operation was successful.  So clearly its not responding
+				//to the B4 LACK messages.
+
 				if (ServiceModeBusy()) {  //this is a function call to DCCcore
 					queueMessage("RECEIVE 0xB4 0x7F 0x00 0x34\n", client);  //LACK and busy
 					return;
 				}
-					
+				
 				if (actionPCMDfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, &asyncLocoNet)) {
 					//read requested, E7 response is via an asynchronous callback
 					queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
@@ -411,12 +415,23 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 				{	//operation not supported
 					queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
 				}
-
+				
 				return;
 
 			}
 			else
 			{//POM MODE
+
+				//if controller is still in service mode then reject the request.  DP will timeout with a 306 error.
+				if (power.serviceMode) {
+					queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
+					//queueMessage("RECEIVE 0xB4 0x6F 0x7F 0x5B\n", client);  //found on the internet
+					nsWiThrottle::queueMessage("x-sm-x", "DEBUG");
+					return;
+				}
+
+
+
 
 				//loconet cvs are zero based
 				if ((slot124Message.PCMD & 0b1000) == 0) {

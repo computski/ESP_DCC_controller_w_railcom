@@ -163,7 +163,7 @@ enum cvSTATE
 	RD_FINAL
 };
 
-struct CV {
+struct SM {
 	int8_t digit;
 	bool read;
 	bool write;
