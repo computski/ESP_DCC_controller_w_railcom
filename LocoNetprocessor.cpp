@@ -329,16 +329,55 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 			break;
 
 		case OPC_SW_REP:
-		case OPC_SW_REQ:
-			// Command a turnout.
-			// Immediate response of <0xB4><30><00> if command failed, otherwise no response
-			break;
+			break; //not supported
+			/* <0xB1>,<SN1>,<SN2>,<CHK> SENSOR state REPORT  NO feedback
+<SN1> =<0,A6,A5,A4- A3,A2,A1,A0>, 7 ls adr bits. A1,A0 select 1 of 4 input pairs in a DS54
+<SN2> =<0,1,I,L- A10,A9,A8,A7> Report/status bits and 4 MS adr bits.
+ this <B1> opcode encodes input levels for turnout feedback
+"I" =0 for "aux" inputs (normally not feedback), 1 for "switch" input used for turnout
+feedback for DS54 ouput/turnout # encoded by A0-A10
+"L" = 0 for this input 0V (LO), 1= this input > +6V (HI)
+alternately;
+<SN2> =<0,0,C,T- A10,A9,A8,A7>
+Report/status bits and 4 MS adr bits.
+this <B1> opcode encodes current OUTPUT levels
+"C"= 0 if "Closed" ouput line is OFF, 1="closed" output line is ON (sink current)
+"T"=0 if "Thrown" output line is OFF, 1="thrown" output line is ON (sink I)
 
+		DESIGN QUESTION: ESP-DCC stores turnouts in the TURNOUT[] array along with their states.
+		Because Panel Pro will contain all turnouts and their states, we don't need to store these in the ESP also
+		but it does create ambiguity on boot, because the turnout states are unknown unless PP sends a message to all of them (or asks
+		for the status of each).  Loconet does not support the idea of an ambigous state.   The turnouts as held in the ESP are all set to closed
+		on boot.
+
+		In theory, if PP was the source of truth, the B1 command is redundant and only B0 is required.
+		Note also that C and T are generally kept mutually exclusively in the 1 state.  e.g. we don't pulse C to 1 and then to zero even
+		for CD systems.  Does PP also follow this convention in its commands?
+		*/
+
+
+		case OPC_SW_REQ:
+			/*Command a turnout.
+			<0xB0>,<SW1>,<SW2>,<CHK> 
+			<SW1> =<0,A6,A5,A4- A3,A2,A1,A0>, 7 ls adr bits. A1,A0 select 1 of 4 input pairs in a DS54
+			<SW2> =<0,0,DIR,ON- A10,A9,A8,A7> Control bits and 4 MS adr bits.
+			DIR=1 for Closed,/GREEN, =0 for Thrown/RED
+			ON=1 for Output ON, =0 FOR output OFF
+			Note-,Immediate response of <0xB4><30><00> if command failed, otherwise no response
+
+			Does DP represent turnouts as 1-1024 or as 1-512 with 4 IOs on each?
+			There is no feedback from this command.
+			*/
+			
+			uint16_t addr = tokens[1];
+			addr += (tokens[2] & 0x0F) << 8;
+			bool closed = (tokens[2] & 0b00100000) == 0 ? false : true;
+			bool onState = (tokens[2] & 0b00010000) == 0 ? false : true;
+			writeTurnout(addr, closed, onState);
 
 		}
 		return;
-
-	}//end 4 token
+	}//end 4 token block
 
 	//VARIABLE-LENGTH token messages
 	switch (tokens[0]) {
@@ -348,6 +387,10 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 		//0xEF 0x0E SLOT# STAT1 ADR SPD DIRF TRK SS2 ADR2 SND ID1 ID2  regular speed command to loco
 		//0xEF 0x0E 0x7C PCD 0 HOPSA LOPSA TRK CVH CVL DATA7 0 0  programming command
 		//0xEF 0x0E 0x7B fast clock command
+
+		//2026-01-25 note, it seems slot 7F controls options on the commandstation DC240.  In PanelPro, Loconet, configure command station.
+		//but the option switches don't really appear to be useful to me.
+		//
 
 		if ((tokens[2] != 0x7C) && (tokens[2] != 0x7B)) {
 			//write slot data form of command
@@ -382,6 +425,12 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 			<B4>, <7F>, <1>, <0x35> Task accepted, <E7> reply at completion.
 			<B4>, <7F>, <0x40>, <0x74> Task accepted blind NO <E7> reply at completion.
 			Any Slot RD from the master will also contain the Programmer Busy status in bit 3 of the <TRK> byte.
+			
+			
+			2026-01-22 Thailand.  LACK 2nd token should be the original opco code with <7>=0 i.e. it should be
+			<B4> <6F> not <7F> because the original opcode was <EF>.  I think 7F is a typo in the spec document.
+			I did try this before and it didn't make DP behave any differently.
+			
 			*/
 			
 										
@@ -468,12 +517,7 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 
 		}  //END 0x7C block.
 
-	return;
-	
-
-	}
-
-
+	}  //end tokens[0] block
 }
 
 
@@ -750,6 +794,34 @@ void nsLOCONETprocessor::writeDIRF_SPD( uint8_t* dirf, uint8_t* spd, void* loc) 
 
 }
 	
+
+/// <summary>
+/// Send a turnout command to line.  Only "on" is supported, "off" messages are ignored.  This means multiple simultaneous signal aspects cannot be commanded.
+/// With turnouts most control units will react to "on" only and consider Thrown and Closed as mutually exclusive.
+/// </summary>
+/// <param name="addr">zero based Loconet turnout address</param>
+/// <param name="closed">true if addressing the closed-solenoid</param>
+/// <param name="onState">true to energise, false to de-energise (ignored)</param>
+void nsLOCONETprocessor::writeTurnout(uint16_t addr, bool closed, bool onState) {
+	//does not support transmission of 'off' state at present
+	if (!onState) return;
+	//i is the index of the turnout slot. 1-based address.
+	uint8_t i = findTurnout(addr+1);
+
+	if (i > MAX_TURNOUT) return;
+
+	//note, turnout[i].selected is a HUI feature, we do not need to change it
+	//name is a feature in the local roster, Panel Pro does not need to know this or interact with it
+	turnout[i].thrown = !closed;
+	turnout[i].changeFlag = true;
+
+	trace(Serial.printf("writeTurnout %d\n",addr+1);)
+	
+	return;
+
+}
+
+
 
 
 /// <summary>
