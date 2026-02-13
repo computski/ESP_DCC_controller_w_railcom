@@ -7,76 +7,96 @@
 #include "DCCcore.h"
 #include "WiThrottle.h"  //for debug over tcp
 
-/*TO DO
-* loss of loconet client should cause all slots to go to zero speed, and and Status to Common.
-*
-* broadcast messages?  There is NO need to send broadcasts from LocoNet because this is required for multi-throttles, and this is handled by DP.
-* 
-* 
-* Notes on DP.
-* you can use DP to host a throttle controller.  this allows you to use ED and also open throttles on the laptop.  Note though, that on ED, if you select a loco from the server roster
-* it will not display any function buttons.  This is a bug in DP, where it fails to send details of available functions to ED.  You will find that if instead you select a loco address
-* directly by entering it into ED, then all the functions will appear on the throttle.
-*
-*
-* debug approach.  The ESP is on .129 port 2560.  I can connect to this with Hercules TCP client.  If we then send to 'all clients' as ASCII debug this should work.
-* 
-* POM, I need to reprogram this to expect NACK, ACK, BUSY via a callback.  These are only expected if a callback routine has been set.
-
-
-2026-01-06 intractable bugs.  There's some flakey shit going on with DP.  For POM read it can read CV1 just fine, the hardware reads a good value and this comes back in 
-monitor loconet.  but cv8, despite reading correctly on the hardware won't appear in the loconet traffic despite the low level loconet write routine confirming it was called.
-so either it failed to encode the string correctly with maybe a missing return or errant checksum, else its DP that is failing to read the incoming data.
-
-*/
 
 
 
-/*LocoNet support 2025-12
- 
-Note: JRMI Decoder Pro (DP) does not seem to recognise it has lost the TCP connection and does not attempt a re-initialise of LocoNet.  You have to manually restart DP.
+
+/*LocoNet support 2026-02
 
 The base protocol for loconet is found in the loconet personal edition https://www.digitrax.com/support/loconet/loconetpersonaledition.pdf
-JRMI DP uses loconet over TCP which has additional message prefixes https://loconetovertcp.sourceforge.net/Protocol/LoconetOverTcp.html
-in short, you first echo the command then transmit SENT OK and then transmit your response. https://loconetovertcp.sourceforge.net/Protocol/SD_blocking_request.svg
+JRMI Decoder Pro (DP) and Panel Pro (PP) uses loconet over TCP which has additional message prefixes https://loconetovertcp.sourceforge.net/Protocol/LoconetOverTcp.html
+You first echo the command then transmit SENT OK and then transmit your response. https://loconetovertcp.sourceforge.net/Protocol/SD_blocking_request.svg
 Useful glossary from digitrax https://www.digitrax.com/tsd/glossary/c/
 
-The protocol has a series of system memory 'slots' these are not loco addresses.  slot 124 is a special slot to control programming
-A slot is set up to hold a loco and then commands are sent to that slot and the controller will repeately transmit the slot content to the track
-This is pretty much how my original project works anyway, with the Loco[] array.
+LocoNet protocol uses a series of system memory 'slots'.  These are not loco addresses.  Slot 124 is a special slot to control programming.
+A slot is set up to hold a loco and then commands are sent to that slot and the controller will repeately transmit the slot content to the track.
+This is exactly how the DCC ESP controller works, it holds a loco[] array of 8 loco slots and repeatedly transmits these to the track.
 
-IMPORTANT: this ESP project was originally designed as a stand-alone DCC control and implements a WiThrottle server.  If you link this controller to DP over LocoNetoverTCP then
-the laptop needs to run the WiThrottle server and it in turn will issue slot commands over loconet to the controller which will transmit to the track.  i.e. Engine Driver now connects to 
-the laptop and not to the ESP.
+IMPORTANT: this ESP project was originally designed as a stand-alone DCC controller and implements a WiThrottle server.  If you link this controller to DP over LocoNetoverTCP then
+the laptop DP application needs to run the WiThrottle server and this in turn will issue slot commands over loconet to the ESP controller which will transmit to the track.
+i.e. Engine Driver now connects to the laptop IP address and not to the ESP controller.
 
-This module uses the existing ESP WiThrottle port to monitor for incoming LocoNet messages.  It recognises the incoming messages as loconet and changes the handler that
+This module uses the existing ESP WiThrottle port to monitor for incoming LocoNet messages.  It recognises the incoming messages as LocoNet and changes the handler that
 receives them to direct the messages to the LocoNetprocesssor.  This routine also makes calls to DCC core for programmer support, and asynchronous callbacks are made from DCC core
 to this module to handle incoming ACK pulses/ Service Mode read/writes as well as those for Program on Main.
 
-Note that DP does not support reading cvs on the main, even though notionally the DP GUI appears to support this, you will find the app refuses to process such requests and so no
-commands are sent over loconet to this module.
+IMPORTANT: This ESP controller can support reading on the main using Railcom.  However, DP does not support reading on the main in terms of Read Full Sheet.  It is possible to bring up the 
+DP programming CVs sheet when in Program on  Main mode, and click Read to read CVs individually.  Its a limitation of DP that even on this tab, it still does not support Read Full Sheet.
 
 LocoNet locos are in slots 1-127, so we need to offset by one to make use of the loco[] array.  Slot 0 is used for dispatch which we don't need.
 to release a loco, locoNet writes 0x13 to STATUS1. 0b0001 0011. loco not consisted and common.
 
-Using locoNet will overwrite the roster that is stored in the ESP-DCC.  The roster itself is managed in DP, no longer stored on the ESP.  The ESP will restore its locally stored roster on boot.
+Using locoNet will overwrite the roster that is stored in the ESP-DCC.  The roster itself is managed in DP, no longer stored on the ESP.  The ESP will restore its locally
+stored roster on re-boot.
 
 Note: LocoNet asks for control of a loco address. If the Master responds that the loco is in use, then the client is supposed not to ask to use it!  JRMI seems to
-go ahead and flag that loco for inUse a second time.  Not true.  this is an aberration of ED.  e.g. ED asks for loco 464 and you see this executed on LocoNet.
-if you use ED to request 464 a second time then no loconet traffic is generated.  ED is just doubling the 464 loco within its own app.
+go ahead and flag that loco for inUse a second time.  Not true.  This is an aberration of Engine Driver (ED).  e.g. ED asks for loco 464 and you see this executed on LocoNet.
+If you use ED to request 464 a second time then no loconet traffic is generated.  ED is just doubling the 464 loco within its own app.
 
-This system does not support DCCeX because I consider it an inferior protocol to LocoNet.
+This system does not support DCC-EX because I consider it an inferior protocol to LocoNet.
 
-Important: this module is an adjunct to WiThrottle.  In WiThrottle, there is a routine broadcastChanges() which is called regularly from the main loop.  This routine has a local 
-sendToClient() routine which addess messages to the outbound queue.
-
-Calls to write/read the prog track and to write/read POM result in an async callback to callbackLocoNet() this in turn generates a locoNet message to confirm the operation 
+Calls to write/read the programming track (service mode) and to write/read POM result in an async callback to callbackLocoNet() this in turn generates a locoNet message to confirm the operation 
 was a success or not.  Note that DP does not define how to enter/exit Service Mode (prog track).  This code will enter SM if an SM command is received.  It will only exit SM if
 the track power is cycled, but this could be dangerous because say you have a mis wired decoder, you initialise SM then put the loco on the track.  it causes a trip and then you 
 exit SM.  This would put full power on the miswired decoder....well ok, but then how are we to exit SM?   Ditto track is not in SM mode until you send the first SM command, so a miswired
 decoder could detonate.  Perhaps the DP designers' assumption was the controller has a permanent SM output.
 
 Note: DP does not support POM-read via Railcom for entire pages of CVs, but it does support individual CV reads on POM under the CVs tab.
+
+Note: JRMI Decoder Pro (DP) does not seem to recognise it has lost the TCP connection and does not attempt a re-initialise of LocoNet.  You have to manually restart DP.
+
+
+ **** SPECIFIC behaviours ****
+
+LOCO ROSTER.
+The ESP has a loco roster, but DP will ingore it.  DP does not ask for the roster.  Instead DP has its own roster and asks the controller to assign a control-slot to locos in this roster.
+Whilst the ESP boots with a particular internal roster (for use when running as stand-alone), this gets overwritten with the slot requests from DP.  So at an operational level
+it is not a good idea to try and mix stand-alone and loconet modes together.
+
+TURNOUT ROSTER.
+The ESP has a turnout roster also, but DP will ignore it.  DP can ask for this roster but it is not clear what it does with this info.  When operating, DP or PP will use its own turnout
+roster and issue commands to track as required.  The ESP roster remains unchanged throughout.  This means it is in theory possible to control turnouts from PP and use the DCC_ESP WiThrottle
+server with Engine Driver to control the locos.
+
+SERVICE MODE.
+If DP sends a service mode (programming track) request to the ESP controller, the ESP controller immediately goes into low power mode.  Note that the ESP controller will always boot in high power
+mode, so never place a loco on the programming track before you have sent at least 1 service command to force the track into service mode and thus limited the current to a safe level.
+[One way around this is to set the current limit to always be 250mA on the ESP controller if you intend to always use it as a programming track]
+The unit will stay in service mode until such time as you send a power-off power-on sequence to the ESP from DP.
+The unit does support write-confirmation, and this allows DP to show whether CV value was correct programmed or not.
+
+PROGRAM ON MAIN.
+DP can set POM write commands whilst the railroad is operating, but these are always unverified, i.e. DP does not seek verification that the command was written successfully or not.  DP
+unfortunatley does not support Railcom as a backchannel for verification.   The ESP controller does support reading of CVs on the main via Railcom, however it appears there is no means
+to establish POM-with-read in DP itself.  However, it IS possible to open a page of CVs in DP for a loco and have the ESP-railcom-read individual CVs (not in bulk).  The limitations are
+in the way DP is programmed and not the ESP application.
+
+COMMUNICATIONS TIMEOUTS, LOSS OF CONNECTION.
+DP does not send a keepalive message to the ESP controller.  If the railroad is running and no throttle/turnout/POM commands are initated on DP, then DP will send no communication at all
+to the ESP and this might be for several minutes.  If DP crashes/exits or the laptop it is running on goes to sleep or Wifi drops out, then the ESP may not always see a TCP disconnect event.
+This will lead to runaway locos, because they continue to operate per the last command even though DP is no longer running. 
+
+DP also does not re-establish communications if this has dropped out.  You are forced to exit DP and then restart the app.
+
+TO DO: My software will hit emergency stop on all locos if the TCP link drops, but as mentioned this event may not happen, particularly if the laptop running JMRI goes to sleep.
+The only reliable fix to this issue is for the JMRI developers to add a heartbeat message into locoNet.
+
+**** UNCHARACTERISED behaviours ****
+Do not run the DCC_ESP WiThrottle server at the same time as linking the DCC_ESP to JRMI and running a WiThrottle server on JRMI.
+Panel Pro can be used simultaneously with the turnout controls on the DCC_ESP when running as a WiThrottle server for EngineDriver, however PP will not mirror changes made
+to the turnout positions by the DCC_ESP if it is used in this fashion.
+If the JRMI laptop goes to sleep, the system may lose control of the locos as commanded by JRMI
+
 
 */
 
@@ -371,9 +391,13 @@ this <B1> opcode encodes current OUTPUT levels
 			
 			uint16_t addr = tokens[1];
 			addr += (tokens[2] & 0x0F) << 8;
+			/*2026-02-05 deprecated, we now use actionAccessoryFromLocoNet()
 			bool closed = (tokens[2] & 0b00100000) == 0 ? false : true;
 			bool onState = (tokens[2] & 0b00010000) == 0 ? false : true;
-			writeTurnout(addr, closed, onState);
+			writeTurnout(addr, closed, onState);  //DEPRECATED
+			*/
+
+			actionAccessoryFromLocoNet(addr, (tokens[2] & 0b00100000) == 0 ? true : false, (tokens[2] & 0b00010000) == 0 ? false : true);
 
 		}
 		return;
@@ -794,7 +818,7 @@ void nsLOCONETprocessor::writeDIRF_SPD( uint8_t* dirf, uint8_t* spd, void* loc) 
 
 }
 	
-
+/*DEPRECATED
 /// <summary>
 /// Send a turnout command to line.  Only "on" is supported, "off" messages are ignored.  This means multiple simultaneous signal aspects cannot be commanded.
 /// With turnouts most control units will react to "on" only and consider Thrown and Closed as mutually exclusive.
@@ -820,7 +844,7 @@ void nsLOCONETprocessor::writeTurnout(uint16_t addr, bool closed, bool onState) 
 	return;
 
 }
-
+ */
 
 
 
@@ -889,5 +913,28 @@ void nsLOCONETprocessor::queueMessage(std::string s, AsyncClient* client) {
 	m.msg = s;
 	messages.push_back(m);
 	
+}
+
+/// <summary>
+/// Call from TCP-IP disconnect event.  Will stop all locos and clear-down the loconet slots
+/// </summary>
+void nsLOCONETprocessor::cleanExit(void) {
+	Serial.println(F("loconet client exit"));
+	for (auto& loc : loco) {
+		//STATUS1. 0b0001 0011. is 0x13 .loco not consisted and common i.e. it is free.
+		//<0-2> decoder type and speed steps
+		//<3> SL consist, expect zero if loco free
+		//<5-4> 00=free, 01=idle.  the other combos indicate it is in use 11=in use, 10= in use but not sending data to track (not refreshed)
+		
+		//DESIGN DECISION.  We do not anticipate the DCC_ESP controller will be operating locally as a WiThrottle server as well as operating as
+		//a loconet controller subservient to DP.  Therefore, if a LocoNet client calls cleanExit() we will stop all locos in the roster and clear
+		//their STATUS1 values to zero.
+
+		loc.speed = 0;
+		loc.speedStep = 0;
+		loc.changeFlag = true;
+		loc.LocoNetSTATUS1 = 0;
+
+	}
 }
 

@@ -388,7 +388,17 @@ static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 static void handleDisconnect(void* arg, AsyncClient* client) {
 	//Serial.printf("\n client %s disconnected \n", client->remoteIP().toString().c_str());
 	//the client always seems to report as 0.0.0.0 so no point doing anything more than a message
-	Serial.println(F("client disconnected"));
+
+	//ok but maybe we can find the client in our client[] array
+	for (auto c : clients) {
+		if (c.client == client) {
+			if (c.HU == "LN") {
+			//was a loconet client disconnecting.  Stop all locos and clear slots down.
+				nsLOCONETprocessor::cleanExit();
+			}
+			Serial.printf("\n Disco client was %s\n", c.HU.c_str());
+		}
+	}
 
 	//2021-02-03 take no further action.  Do not delete the client_t element from the clients vector, because we don't know if 
 	//this was a clean exit, or a wifi dropout (which causes a connection reset and then a client-disco on reconnect, followed by 

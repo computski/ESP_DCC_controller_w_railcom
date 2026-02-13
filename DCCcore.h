@@ -22,7 +22,7 @@
 /*version control and capture of some system defaults for new compilations*/
 struct CONTROLLER
 {
-	long	softwareVersion = 20251104;  //yyyymmdd captured as an integer
+	long	softwareVersion = 20260205;  //yyyymmdd captured as an integer
 	uint16_t	currentLimit = 1000;
 	uint8_t	voltageLimit = 15;
 	char SSID[21] = "DCC_ESP";
@@ -186,6 +186,7 @@ struct ACCESSORY
 {
 	uint16_t    address = 0;
 	bool        thrown;
+	bool		powerOn;
 };
 
 /*dcc state engine*/
@@ -228,6 +229,7 @@ bool writeServiceCommand(uint16_t cvReg, uint8_t cvVal, bool read, bool enterSM,
 bool ServiceModeBusy(void);
 void railcomCallback(uint8_t result, uint8_t ctrl, bool success);
 bool actionPCMDfromLoconet(uint8_t PCMD, uint16_t addr, uint16_t cv, uint8_t data, void (*callback)(bool, uint8_t));
+void actionAccessoryFromLocoNet(uint16_t addr, bool thrown, bool powerOn);
 void updatePOMdisplay();
 
 //debug

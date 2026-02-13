@@ -1014,7 +1014,7 @@ sent out*/
 	case DCC_ACCESSORY:
 		/* basic packet is  {preamble} 0 10AAAAAA 0 1AAACDDD 0 EEEEEEEE 1, see S-9.2.1 para 420
 		 * For turnouts its effectively an 11 bit address 10AAAAAA 1AAACAAT
-		 * * C is 1 because we activate one half of the pair at the address
+		 * C is 1 for power on, 0 off. Used for signal aspects.  Turnouts generally act on the 1 instruction.
 		 * D in <0> (or T in my notation) indicates which half of the pair is activated.
 		 * The most significant bits of the  address are bits <6-4> of the second data byte. By convention these bits in the
 		 * second data byte are in ones complement.  2018-10-02 re-written to fix bugs
@@ -1037,17 +1037,20 @@ sent out*/
 		DCCpacket.data[1] |= (a >> 4) & 0b01110000;
 		//complement bits <6-4>
 		DCCpacket.data[1] ^= 0b01110000;
-		DCCpacket.data[1] |= 0b10001000; //set <7> marker and <3> activate bit
+		//DCCpacket.data[1] |= 0b10001000; //set <7> marker and <3> activate bit.  2026-02-05 <3> is set below
+		DCCpacket.data[1] |= 0b10000000; //set <7> marker
 
-
-		//if thrown, add 1
+		//if thrown, set <0>
 		if (accessory.thrown) DCCpacket.data[1]++;
+
+		//2026-02-05 if powerOn then set C bit
+		DCCpacket.data[1] |= accessory.powerOn ? 0b1000 : 0;
 
 		DCCpacket.data[2] = DCCpacket.data[0] ^ DCCpacket.data[1];
 		DCCpacket.packetLen = 3;
 
 		//2021-1-4 debug dump the packets
-		//Serial.printf("ACC packets %d %d\r\n", DCCpacket.data[0], DCCpacket.data[1]);
+		trace(Serial.printf("ACC packets %d %d\r\n", DCCpacket.data[0], DCCpacket.data[1]);)
 
 		dccSE = DCC_LOCO;
 		break;
@@ -3216,12 +3219,15 @@ void ina219Mode(boolean AverageMode) {
 }
 
 
+
 /// <summary>
 /// update local machine display in response to JRMI instructions over JSON or WiThrottle
 /// or from the local hardware interface
 /// will first transmit turnout - commands to line
 /// will also clear the change flags and will clear broadcast roster flags
 /// </summary>
+/// 2026-02-05 possible bug;  we should not allow entry into DCC_ACCESSORY if ddcSE is DCC_SERVICE | DCC_POM because that could 
+/// cause unpredicatable operation.
 void updateLocalMachine(void) {
 
 	bool doUpdate = false;
@@ -3239,15 +3245,22 @@ void updateLocalMachine(void) {
 	for (auto& turn : turnout) {
 		if (turn.changeFlag) {
 			doUpdate = true;
-			/*2020-05-18 queue transmission to line*/
+			//2020-05-18 queue transmission to line, and only handle one change at a time
 			accessory.address = turn.address;
 			accessory.thrown = turn.thrown;
+			//2026-02-05 for the turnout roster, we only support powerOn.  powerOff is relevant for signal aspects.
+			//turnouts, whether solenoid or servo have decoders that control pulses or positions so powerOff is not relevant.
+			accessory.powerOn = true;
 			dccSE = DCC_ACCESSORY;
 			/*transmit one at a time*/
 			turn.changeFlag = false;
 			break;
 		}
 	}
+
+	//2026-02-05 insert something here to set accessory from LocoNet or do we just directly write to accessory and go into dccSE = DCC_ACCESSORY in a separate sub?
+
+
 
 	//2021-1-27 clear roster flags, these should have been acted on by WiThrottle and DCCweb
 	bootController.flagLocoRoster = false;
@@ -3834,4 +3847,37 @@ void createPOMpollingPacket(void) {
 	
 	
 
+}
+
+/// <summary>
+/// Issue a dcc accessory command, independent of the local turnout roster
+/// </summary>
+/// <param name="addr">zero-based accessory address</param>
+/// <param name="thrown">thrown position</param>
+/// <param name="powerOn">set as true for turnouts, or on/off for signal aspects</param>
+void actionAccessoryFromLocoNet(uint16_t addr, bool thrown, bool powerOn) {
+	/*2026-02-05 DCCcore::updatelocalmachine is the only place where turnout[] data is copied across to the temporary accessory object which is then used by
+	the dccPacket engine to send a command to line.  It is also the only place we set dccSE = DCC_ACCESSORY which will trigger the dccPacketEngine.
+	updatelocalmachine is called on the INO loop, so it will pick up on a turnout.changeFlag and then trigger dccSE.  But this is async and possibilbly could cause
+	confusion if the dccSE was in a POM mode rather than just a generic packet cycle.
+
+	Therefore, for turnouts via loconet, we don't have to interact with the ESP turnout roster, we can just initiate commands independently.  Means the turnout roster is
+	not synced to loconet activity, but I don't think that's a bad thing.
+	*/
+
+
+	switch (dccSE) {
+	case DCC_POM:
+	case DCC_SERVICE:
+	case DCC_ACCESSORY:
+		return;
+	}
+
+	//proceeed to set up an accessory packet.  Note that turnout "1" in the local turnout roster maps to addres 0b100
+	//whereas Loconet is a zero based index, so turnout "1" is referred to as address 0, hence the need to add 1.
+	accessory.address = addr+1;
+	accessory.thrown = thrown;
+	accessory.powerOn = powerOn;
+	dccSE = DCC_ACCESSORY;
+	trace(Serial.printf("actionAccessory %d\n", addr + 1);)
 }
