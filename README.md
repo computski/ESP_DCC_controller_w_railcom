@@ -19,3 +19,5 @@ The 6N137 also has a gating input on the output stage, and we drive this from ra
 2025-05-13 fixed a bug in global.h which incorrectly defined the drive pins for the 2-pin drive arrangement on the LMD18200.  Railcom detector now works properly and with loco facing in either direction.
 
 2025-11-05 adding support for JMRI and LocoNet over TCP.  Work in progress.
+
+2026-02-19 LocoNet working, added support for OPC_IMM dcc immediate messages which allows use of multi aspect signals
