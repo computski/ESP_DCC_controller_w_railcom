@@ -385,8 +385,8 @@ this <B1> opcode encodes current OUTPUT levels
 			ON=1 for Output ON, =0 FOR output OFF
 			Note-,Immediate response of <0xB4><30><00> if command failed, otherwise no response
 
-			Does DP represent turnouts as 1-1024 or as 1-512 with 4 IOs on each?
-			There is no feedback from this command.
+			JRMI Panel Pro sends turnouts as 0-2047 which maps to 1-2048 in the 'real world'. It sends a turnout command twice.  First with power on, then with power off.
+			e.g. throw+poweron then throw+poweroff
 			*/
 			
 			uint16_t addr = tokens[1];
@@ -406,7 +406,47 @@ this <B1> opcode encodes current OUTPUT levels
 	//VARIABLE-LENGTH token messages
 	switch (tokens[0]) {
 
-	case OPC_WR_SL_DATA:
+	case OPC_IMM_PACKET:
+		//used for multi-aspect signalling.  the DCC payload itself is captured in the tokens
+		//<0xED>,<0B>,<7F>,<REPS>,<DHI>,<IM1>,<IM2>,<IM3>,<IM4>,<IM5>,<CHK>
+		//<REPS> D4,5,6=#IM bytes,D3=0(reserved); D2,1,0=repeat CNT
+		//<DHI >= <0, 0, 1, IM5.7 - IM4.7, IM3.7, IM2.7, IM1.7>
+		//LACK=<B4>,<7D>,<7F>,<chk> if CMD ok
+		//example from Panel Pro, note that it violates DHI coding as <5> should be 1
+		//[ED 0B 7F 30 01 01 77 03 00 00 22]  Extended Accessory Decoder Set Digitrax Address 8 (NMRA Address 4) to Aspect 3.
+
+		//there's no need to decode this message in full.  We will pass on the DCC payload to a routine that directly puts DCC packets into the
+		//packet engine for transmission.  IM1,IM2 are the encoded address and IM3 is the command.  Note that IMs are 7 bits, their <7> is held in
+		//DHI
+
+	{
+		//expect 11 tokens
+		if (tokens[1] != 0x0B) return;
+
+		uint8_t payloadLength = (tokens[3] & 0b111000) >> 4;
+		uint8_t repeats =  tokens[3] & 0b11;  //zero means no repeats, i.e. one transmission
+		//now build a payload array
+		uint8_t payload[5];
+		for (int i = 0;i < 5;i++) {
+			payload[i] = tokens[5+i];
+			//add <7> for each IM as indicated in DHI byte
+			payload[i] += (tokens[4] & (1 << i)) != 0 ? 0x80 : 0;
+		}
+		
+		actionDCCpacketFromLocoNet(payload, payloadLength, repeats);
+
+		//note that the Extended Accessory Decoder specification is found here, and is updated as of 2025
+		//https://www.nmra.org/sites/default/files/standards/sandrp/DCC/S/s-9.2.1_dcc_extended_packet_formats.pdf
+		//{preamble} 0 10AAAAAA 0 0BBB0AA1 0 XXXXXXXX 0 EEEEEEEE 1
+		//byte 1 is A<7-2> byte 2 BBB=A<10-8> 1s compliment, AA=A<1-0>  and byte 3 is a full 8-bit payload
+
+
+		//final respone is LACK=<B4>,<7D>,<7F>,<chk> if CMD ok
+		queueMessage("RECEIVE 0xB4 0x7D 0x7F 0x49\n", client);
+	}
+			break;
+
+		case OPC_WR_SL_DATA:
 		//this is how the throttle sends messages to locos, 3 forms exist.  Response is OPC_LONG_ACK
 		//0xEF 0x0E SLOT# STAT1 ADR SPD DIRF TRK SS2 ADR2 SND ID1 ID2  regular speed command to loco
 		//0xEF 0x0E 0x7C PCD 0 HOPSA LOPSA TRK CVH CVL DATA7 0 0  programming command
@@ -541,7 +581,9 @@ this <B1> opcode encodes current OUTPUT levels
 
 		}  //END 0x7C block.
 
+
 	}  //end tokens[0] block
+
 }
 
 
@@ -938,3 +980,33 @@ void nsLOCONETprocessor::cleanExit(void) {
 	}
 }
 
+
+
+/*thoughts on DCCpacket.repeat attribute
+DCCpacket is copied to m_TXbuffer close to the end of the frame preamble bits.  Ater that CTS is taken high.  CTS is therefore high the majority of the frame time.
+
+DCCpacketEngine will exit early if CTS is low.  mostly it will find CTS high, and so process the next-up packet and queue this in the buffer. 
+It takes CTS low immediately, effectively gating itself out until Layer1 has pickedup this new packet and returned CTS high.
+So basically it sets a packet and waits.
+
+Therefore if we create DCCpacket.repeat this would be set in DCCpacketEngine.  Layer1 needs to know this is a new packet and not just the same one repeated.
+e.g. if repeat=3, do we want to reload the packet and send another 3 times?  I think yes that is ok.
+
+Existing
+copy DCCPacket to TXbuffer, set CTS=high and then get on with processing TXbuffer.
+
+New
+copy DCCPacket to TXbuffer only if TXbuffer.repeat=0.  if non-zero we will send TXbuffer content again  [check it is not modified during read]
+and decrement .repeat toward zero.  
+
+But does this cause a problem with timely DCCpacket refreshes?
+
+today, CTS is high for the entire DCC packet transmission period, which gives the main loop time to refresh DCC packet.
+
+If .repeat=2 then we will transmit that same buffer 3 times.  on the zero loop, we will set CTS high and at this point it will be high for the entire packet frame
+so yes this works.
+
+i.e. if .repeat>0 then don't set CTS until we are on the 'zeroth' loop.
+
+
+*/

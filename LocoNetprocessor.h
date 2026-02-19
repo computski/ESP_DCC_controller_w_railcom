@@ -42,6 +42,7 @@
 //variable length message opcodes
 #define OPC_WR_SL_DATA 0xEF
 #define OPC_SL_RD_DATA 0xE7
+#define OPC_IMM_PACKET 0xED
 
 
 

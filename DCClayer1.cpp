@@ -396,10 +396,10 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 			//to the buffer because this int may have occured then.  To allow the main routine to finish that write, we don't read the buffer until we have completed at least 14 bits of preamble
 			//and now REALLY need the buffer contents.  14bits = 1624uS of preamble, i.e. a 1624uS blanking period to finish the write.
 
-			/*copy DCCpacket to TXbuffer. memcpy would be slower than direct assignment
-			immediately after data is copied, set DCCclearToSend which flags to DCCcore module that a new
-			DCCpacket may be written
-			2019-12-05 increased to 6 packet buffer with copy-over*/
+			//copy DCCpacket to TXbuffer. memcpy would be slower than direct assignment
+			//immediately after data is copied, set DCCclearToSend which flags to DCCcore module that a new
+			//DCCpacket may be written. If no new packet is provided, the routine keeps retransmitting what is in DCCpacket.
+			//2019-12-05 increased to 6 packet buffer with copy-over
 
 			_TXbuffer.data[0] = DCCpacket.data[0];
 			_TXbuffer.data[1] = DCCpacket.data[1];
@@ -414,6 +414,7 @@ static void IRAM_ATTR dcc_intr_handler(void) {
 			TXbyteCount = 0;
 			DCCpacket.clearToSend = true;
 
+			
 			if (!_TXbuffer.longPreamble) {
 				//we have already covered the standard 14 bits preamble, so trigger the start bit 
 				TXbitCount = 9;

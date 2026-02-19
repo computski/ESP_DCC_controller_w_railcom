@@ -198,7 +198,8 @@ enum dccSTATE
 	DCC_ESTOP,
 	DCC_SERVICE,
 	DCC_POM,
-	DCC_IDLE
+	DCC_IDLE,
+	DCC_IMMEDIATE
 };
 
 
@@ -230,6 +231,7 @@ bool ServiceModeBusy(void);
 void railcomCallback(uint8_t result, uint8_t ctrl, bool success);
 bool actionPCMDfromLoconet(uint8_t PCMD, uint16_t addr, uint16_t cv, uint8_t data, void (*callback)(bool, uint8_t));
 void actionAccessoryFromLocoNet(uint16_t addr, bool thrown, bool powerOn);
+void actionDCCpacketFromLocoNet(uint8_t* payload, uint8_t payloadLength, uint8_t repeat);
 void updatePOMdisplay();
 
 //debug

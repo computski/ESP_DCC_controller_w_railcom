@@ -83,6 +83,7 @@ uint8_t m_generalTimer;
 uint8_t m_tick;  //25 ticks in a quarter second
 uint8_t m_eStopDebounce;  //holds debounce scan of local estop button
 
+static DCCBUFFER m_LocoNetHoldingBuffer;  //2026-02-18
 
 
 /*define LCD special chars map to 0x01 through 0x06*/
@@ -226,7 +227,6 @@ enum machineSTATE
 
 /*statics*/
 machineSTATE m_machineSE = M_BOOT;
-
 
 
 
@@ -1011,6 +1011,27 @@ sent out*/
 		break;
 
 
+	case DCC_IMMEDIATE:
+		//we have to hold the loconet data in its own buffer as the loconet call might occur during a period when
+		//CTS is low and DCCpacket is not allowed to change.  We copy over this buffered data when CTS is high.
+		//m_LocoNetHoldingBuffer.railcomPacketCount is repurposed as a generic repeat counter.  0 represents a single
+		//transimission i.e. zero repeats.
+
+		if (m_LocoNetHoldingBuffer.railcomPacketCount == 0) dccSE = DCC_LOCO;
+
+		m_LocoNetHoldingBuffer.railcomPacketCount -= m_LocoNetHoldingBuffer.railcomPacketCount == 0 ? 0 : 1;
+		DCCpacket.longPreamble = false;
+		DCCpacket.data[0] = m_LocoNetHoldingBuffer.data[0];
+		DCCpacket.data[1] = m_LocoNetHoldingBuffer.data[1];
+		DCCpacket.data[2] = m_LocoNetHoldingBuffer.data[2];
+		DCCpacket.data[3] = m_LocoNetHoldingBuffer.data[3];
+		DCCpacket.data[4] = m_LocoNetHoldingBuffer.data[4];
+		DCCpacket.data[5] = m_LocoNetHoldingBuffer.data[5];
+		DCCpacket.packetLen = m_LocoNetHoldingBuffer.packetLen;
+		trace(debugPacket();)  //DEBUG
+		break;
+	
+
 	case DCC_ACCESSORY:
 		/* basic packet is  {preamble} 0 10AAAAAA 0 1AAACDDD 0 EEEEEEEE 1, see S-9.2.1 para 420
 		 * For turnouts its effectively an 11 bit address 10AAAAAA 1AAACAAT
@@ -1024,6 +1045,7 @@ sent out*/
 		 * but you need to be mindful that the controllers 'base address' is in the range 1-511 when you set it up
 		 * i.e. turnout 1 is 00000000100 and turnout 4 is 00000000111 this is not made clear in the specification
 		 */
+	{//scope block
 		uint16_t a = accessory.address + 3;
 
 		//2021-01-04 address space is 9 bits followed by 2 bits of device pair id
@@ -1052,8 +1074,9 @@ sent out*/
 		//2021-1-4 debug dump the packets
 		trace(Serial.printf("ACC packets %d %d\r\n", DCCpacket.data[0], DCCpacket.data[1]);)
 
-		dccSE = DCC_LOCO;
+			dccSE = DCC_LOCO;
 		break;
+	}//scope block
 
 	}//end switch
 
@@ -3880,4 +3903,58 @@ void actionAccessoryFromLocoNet(uint16_t addr, bool thrown, bool powerOn) {
 	accessory.powerOn = powerOn;
 	dccSE = DCC_ACCESSORY;
 	trace(Serial.printf("actionAccessory %d\n", addr + 1);)
+
+	//2026-02-16 if this turnout address happens to be the ESP roster, update that also
+	//.changeFlag will ensure the local hardware display updates.
+	//This code block does not attempt to add the address to the turnout roster, which is why we don't use findTurnout()
+	for (auto& t : turnout) {
+		if (t.address != addr + 1) continue;
+		t.selected = true;
+		t.thrown = thrown;
+		t.changeFlag = true;
+		return;
+	}
+}
+
+/// <summary>
+/// Injects a DCC packet as received in the LocoNet message stream. Builds a valid dcc packet with CRC and 
+/// queues for transmission
+/// </summary>
+/// <param name="payload">array holding the payload</param>
+/// <param name="payloadLength">bytes to transmit, max 5</param>
+/// <param name="repeat">repeat multiple times in succession 0 is one transmission</param>
+void actionDCCpacketFromLocoNet(uint8_t* payload, uint8_t payloadLength, uint8_t repeat) {
+	
+	switch (dccSE) {
+	case DCC_POM:
+	case DCC_SERVICE:
+	case DCC_ACCESSORY:
+		return;
+	}
+	
+	m_LocoNetHoldingBuffer.railcomPacketCount = repeat & 0b111;
+
+	uint8_t crc = 0;
+	uint8_t i;
+	if (payloadLength > 5) return;
+
+	//payload is expected to be 5 bytes max
+	for (i = 0;i < payloadLength;i++) {
+		m_LocoNetHoldingBuffer.data[i] = payload[i];
+		crc ^= payload[i];
+	}
+	//exit pointing at the crc byte
+	m_LocoNetHoldingBuffer.data[i] = crc;
+	m_LocoNetHoldingBuffer.packetLen = i + 1;
+	m_LocoNetHoldingBuffer.longPreamble = false;
+	m_LocoNetHoldingBuffer.doCutout = false;
+	m_LocoNetHoldingBuffer.packetLen = payloadLength+1;
+
+	//we have to buffer the LocoNet payload like this because DCCpacketEngine has to remain synchronous with
+	//the CTS flag, and only change the DCCpacket buffer during this period.  Clearly the call to this function
+	//will be asynchronous and might occur when CTS=false.  DCCpacket is not allowed to change during this time
+	//and the pending loconet data would be lost.
+	trace(Serial.println("actionDCCpacketFromLocoNet");)
+	dccSE = DCC_IMMEDIATE;
+
 }
