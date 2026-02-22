@@ -228,6 +228,7 @@
 
                     STA_SSID.value = hardware.STA_SSID;
                     STA_pwd.value = hardware.STA_pwd;
+                    STA_IP.value = hardware.networkIP;
                 }
 
                 
@@ -318,8 +319,9 @@
             <tr> <td>Websocket port</td><td><input type="text" id="wsPort" /></td> </tr>
             <tr> <td>WiThrottle port</td><td><input type="text" id="wiPort" /></td> </tr>
 
-            <tr> <td>Station SSID</td><td><input type="text" id="STA_SSID" maxlength="18" /></td> </tr>
-            <tr> <td>Station password</td><td><input type="text" id="STA_pwd" maxlength="18" /></td> </tr>
+            <tr> <td>Network SSID</td><td><input type="text" id="STA_SSID" maxlength="18" /></td> </tr>
+            <tr> <td>Network password</td><td><input type="text" id="STA_pwd" maxlength="18" /></td> </tr>
+            <tr> <td>Network IP</td><td><input type="text" id="STA_IP" /></td> </tr>
 
 
             <tr>
@@ -338,9 +340,9 @@
         <br />SSID must be 4+ characters, password must be 8+ characters.
         <br />
         <br />
-        Station SSID is your home WiFi network.  Set blank if you want no connection.<br />
+        Network SSID is your home WiFi network.  Set blank if you want no connection.<br />
         Use the MAC to set a fixed IP address on your home router. 
-        You may also need to port-forward the Web socket and WiThrottle ports.
+        You may also need to port-forward the Web socket and WiThrottle ports. Your router assigns the network IP address.
         <br />
         <br />
 
