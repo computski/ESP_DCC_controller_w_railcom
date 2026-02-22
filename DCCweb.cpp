@@ -83,7 +83,11 @@ void getHardware() {
 	doc["pwd"] = bootController.pwd;
 	doc["version"] = bootController.softwareVersion;
 	doc["wsPort"] = bootController.wsPort;
+	doc["networkIP"] = WiFi.localIP().toString();  //when connected to a router
+		
 	//2025-01-12 if we are not running as a softAP, we need to send the localIP
+	//2026-02-22 this is because the web pages expect to use the [IP] param to find the websocket.  Its a bit bodgey
+	//but we have to substitute the localIP, aka network IP if we are connected to a router.
 	if (WiFi.getMode() == WIFI_AP) {
 		//send the AP default gateway
 		doc["IP"] = bootController.IP;
@@ -92,7 +96,7 @@ void getHardware() {
 		//do not convert to cstr() else we get garbage at the client
 		doc["IP"] = WiFi.localIP().toString();
 	}
-
+	
 	doc["action"] = "poll";
 	doc["STA_SSID"] = bootController.STA_SSID;
 	doc["STA_pwd"] = bootController.STA_pwd[0] == '\0' ? "none" : "*****";
@@ -529,6 +533,7 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 		out["wsPort"] = bootController.wsPort;
 		out["wiPort"] = bootController.tcpPort;
 		out["IP"] = bootController.IP;
+		out["networkIP"]= WiFi.localIP().toString();  //when connected to a router
 		byte mac[6];
 		WiFi.macAddress(mac);
 		char buff[30];

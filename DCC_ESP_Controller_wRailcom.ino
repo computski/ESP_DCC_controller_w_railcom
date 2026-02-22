@@ -1,10 +1,11 @@
 /*
 	Name:       ESP_DCC_Controller.ino
-	updated:	2025-12-18
+	updated:	2026-02-18
 	Author:     Julian Ossowski
 	Target:		WeMOS D1 (R1 or mini)
-	Note:		This device is 4M flash with 1M spiffs. The spiffs hold the webserver files
-				and must be uploaded separately via vMicro publish server feature
+	Note:		This device is 4M flash with 1M using LittleFS. These hold the webserver files
+				and must be uploaded separately via vMicro publish server feature.
+				>>> IMPORTANT make sure you set the filesystem type to LittleFS <<<
 	Serial:		default speed on the serial is 115200
 	IDE:		vMicro inside MS Visual studio.  Should also compile in the Arduino IDE.
 

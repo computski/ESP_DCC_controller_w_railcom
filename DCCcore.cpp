@@ -221,7 +221,8 @@ enum machineSTATE
 	M_ESTOP,
 	M_TRIP,
 	M_UNI_SET,  //uni throttle set loco address and speed steps
-	M_UNI_RUN  //uni throttle runtime
+	M_UNI_RUN,  //uni throttle runtime
+	M_WIFI	//show wifi and ip
 };
 
 
@@ -1357,8 +1358,8 @@ bool setServiceModefromKey(void) {
 
 uint8_t m_powerDigit;
 void setPowerFromKey(void) {
-	/*A,B toggles cursor to mA or volts, numeric values entered and wrap
-	mode will exit. changes are written to eeprom*/
+	/*A,B toggles cursor to mA or volts, numeric values entered and wrap.
+	Mode will exit. changes are written to eeprom*/
 	switch (keypad.keyASCII) {
 	case 'A':
 		m_powerDigit = 0;
@@ -1389,6 +1390,7 @@ void setPowerFromKey(void) {
 	/*flag pending write to eeprom*/
 	bootController.isDirty = true;
 }
+
 
 
 /// <summary>
@@ -1793,6 +1795,33 @@ int8_t setFunctionFromKey(KEYPAD& k) {
 
 
 # pragma region LCD_display_routines
+
+void showWIFIdisplay(void) {
+	lcd.noBlink();
+	lcd.clear();
+	//first line is SSID, second the IP
+	char buffer[20];
+	switch (WiFi.getMode()) {
+	case WIFI_STA:
+		//connected to a router
+			snprintf(buffer,16, "%s", bootController.STA_SSID);
+			lcd.print(buffer);
+			lcd.setCursor(0, 1);
+			snprintf(buffer, 16, "%s", WiFi.localIP().toString().c_str());
+			lcd.print(buffer);
+			break;
+	default:
+		//running as soft AP
+		snprintf(buffer, 16, "%s", bootController.SSID);
+		lcd.print(buffer);
+		lcd.setCursor(0, 1);
+		snprintf(buffer, 16, "%s", bootController.IP);
+		lcd.print(buffer);
+
+	}
+}
+
+
 
 
 void updatePOMdisplay() {
@@ -2931,19 +2960,44 @@ int8_t DCCcore(void) {
 				//exit with mode button, we arrived here because of mode-held so ignore this
 				if (keypad.keyHeld) { break; }
 				if (keypad.key == KEY_MODE) {
-
-					m_machineSE = M_UNI_RUN;
-					updateUNIdisplay();
-
 					//write pending eeprom changes
 					dccPutSettings();
-					dccSE = DCC_LOCO;  //return to loco packet transmission
-				}  //mode
+
+					/*
+					//return to loco packet transmission
+					m_machineSE = M_UNI_RUN;
+					updateUNIdisplay();
+					dccSE = DCC_LOCO;  
+				*/
+				
+					//revision 2026-02-21
+					keypad.requestKeyUp = true;
+					m_machineSE = M_WIFI;
+					showWIFIdisplay();
+				} 
 				else {
 					setPowerFromKey();
 					updatePowerDisplay();
 				}
 				break;
+
+			case M_WIFI:
+				//2026-02-21
+				//exit with mode button.
+				// we asked for keyup so should see keypad.key==0 at some point, as we don't wish to process mode immediately if it was held down
+				
+
+				if (keypad.keyHeld) { break; }
+				if (keypad.key == KEY_MODE) {
+					//return to loco packet transmission
+					m_machineSE = M_UNI_RUN;
+					updateUNIdisplay();
+					dccSE = DCC_LOCO;
+				}
+
+				break;
+
+
 
 			case M_POM:
 				//exit with mode button, we arrived here because of mode-held so ignore this

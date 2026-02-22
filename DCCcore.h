@@ -249,13 +249,12 @@ static void changeDigit(char digitASCII, uint8_t digPos, uint16_t* target);
 static bool setServiceModefromKey(void);
 
 //display related
-
 static void updateTurnoutDisplay(void);
 static void updateServiceModeDisplay(void);
 static void updateUNIdisplay();
+static void showWIFIdisplay(void);
 
 //jogwheel related
-
 static int8_t setLocoFromJog(nsJogWheel::JOGWHEEL& j);
 
 //system or hardware
