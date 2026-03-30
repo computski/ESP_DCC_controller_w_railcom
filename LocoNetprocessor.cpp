@@ -5,7 +5,7 @@
 #include "LocoNetprocessor.h"
 #include "Global.h"
 #include "DCCcore.h"
-#include "DCCweb.h" //2026-03-25
+#include "WiThrottle.h"
 
 
 
@@ -99,14 +99,20 @@ If the JRMI laptop goes to sleep, the system may lose control of the locos as co
 
 
 
-2026-03-25. Support for LocoNet AccessoryController
-the AC will connect to the DCC_ESP controller via a websocket.  The DCC_ESP controller will send JSON messages based on the LocoNet commands received.
+2026-03-30. Support for LocoNet ESPAccessoryController
+the AC will connect to the DCC_ESP controller via TCP.  The DCC_ESP controller will relay the relevant loconet commands verbatim to the AC.
+The following are relayed
+OPC_IMM_PACKET: this is related to MAS signalling
+OPC_INPUT_REP: instruction/query to/from a sensor
+OPC_SW_REP: request a sensor status
+OPC_SW_REQ: command a turnout
+In all cases the whole token string is sent to the AccessoryController and prefixed with RELAY
 
-2026-03-30 the loconet AC does not have to use websockets.  we can run it as a TCP client and pass JSON.
-in fact we could just mirror the loconet messages through to it, and have the AC device decode loconet.  mind you it does need to pass back a sensor reading.
+The AccessoryController also asyncrhonously sends OPC_INPUT_REP sensor state changes to this ESP_controller, and the controller will post them on
+to the JRMI Loconet host prefixed with RECEIVE
 
-this module is aware of the client that sent it a message (i.e. the laptop).  but it would need to know about the AC client, and that is handled in DCCweb in a TCP socket.
-
+same issue when relaying the incoming loconet command.  this module doesn't have visiblity of all clients to find the ESPACC clients.  so this should be handled
+in DCCweb
 
 */
 
@@ -198,6 +204,10 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 	m.append(msg);
 	m.append("\nSENT OK\n");
 	
+	//retain a copy of the loconet message
+	std::string msgCopy;
+	msgCopy.append(msg);
+
 	char* tokenSplit = strtok(msg, " ");
 	while (tokenSplit != NULL) {
 		//tokens.push_back(strtoul(tokenSplit, nullptr, 16));
@@ -375,13 +385,21 @@ this <B1> opcode encodes current OUTPUT levels
 */
 		
 		{//scope block
+			//2026-03-30 new
+			nsWiThrottle::relayLocoNetMessage(msgCopy);
+
+
 			//DS54 address logic. SN1,2 hold A10-A0, left shift these and append SN2<5> as lsb A0, giving 12 bits
+			
+			/*2026-03-30 deprecated
 			uint16_t addr = ((tokens[2] & 0b1111)<< 7) + tokens[1];
 			addr = addr << 1;
 			addr += (tokens[2] & 0b100000) == 0 ? 0 : 1;
 			addr++;  //DCC addresses start at 1, range 1-4096
 			trace(Serial.printf("sensor a=%d\n", addr);)
-			nsDCCweb::broadcastLocoNetCommand("sensor", addr, "unknown");
+
+				nsDCCweb::broadcastLocoNetCommand("sensor", addr, "unknown");
+		*/
 		}
 
 		break;
@@ -400,6 +418,10 @@ this <B1> opcode encodes current OUTPUT levels
 			e.g. throw+poweron then throw+poweroff
 			*/
 			
+
+			//2026-03-30 new
+			nsWiThrottle::relayLocoNetMessage(msgCopy);  
+
 			uint16_t addr = tokens[1];
 			addr += (tokens[2] & 0x0F) << 8;
 			/*2026-02-05 deprecated, we now use actionAccessoryFromLocoNet()
@@ -408,6 +430,7 @@ this <B1> opcode encodes current OUTPUT levels
 			writeTurnout(addr, closed, onState);  //DEPRECATED
 			*/
 
+			/*2026-03-30 deprecated
 			actionAccessoryFromLocoNet(addr, (tokens[2] & 0b00100000) == 0 ? true : false, (tokens[2] & 0b00010000) == 0 ? false : true);
 			if ((tokens[2] & 0b00100000) == 0) {
 				nsDCCweb::broadcastLocoNetCommand("turnout", addr+1, "thrown");
@@ -415,7 +438,7 @@ this <B1> opcode encodes current OUTPUT levels
 			else {
 				nsDCCweb::broadcastLocoNetCommand("turnout", addr+1, "closed");
 			}
-
+			*/
 		}
 		return;
 	}//end 4 token block
@@ -457,10 +480,13 @@ this <B1> opcode encodes current OUTPUT levels
 		//{preamble} 0 10AAAAAA 0 0BBB0AA1 0 XXXXXXXX 0 EEEEEEEE 1
 		//byte 1 is A<7-2> byte 2 BBB=A<10-8> 1s compliment, AA=A<1-0>  and byte 3 is a full 8-bit payload
 
+		//2026-03-30 new
+		nsWiThrottle::relayLocoNetMessage(msgCopy);
+
+
+/*2026-03-30 deprecated
 		//addr is wrong!  33 dcc (offset checked) generates 36 in addr var
 		//ED 0B 7F 32 01   09 71 15 00 00 38   should give 33 true dcc.
-
-		//CAUSES A CRASH
 		//we do need to decode it to send as a JSON message to the ESPaccessory controller
 		uint16_t addr = payload[1]>>4;  //BBB part
 		addr ^= 0b111; //1's compliment
@@ -473,7 +499,8 @@ this <B1> opcode encodes current OUTPUT levels
 		//nsDCCweb::broadcastLocoNetCommand("MAS", addr, buf);
 		trace(Serial.printf("MAS %d %s\n", addr, buf);)
 		//Serial.println("booya");
-		
+		*/
+
 		//final respone is LACK=<B4>,<7D>,<7F>,<chk> if CMD ok
 		queueMessage("RECEIVE 0xB4 0x7D 0x7F 0x49\n", client);
 	}

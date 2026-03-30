@@ -165,6 +165,26 @@ static void handleError(void* arg, AsyncClient* client, int8_t error) {
 	Serial.printf("\n connection error %s from client %s \n", client->errorToString(error), client->remoteIP().toString().c_str());
 }
 
+
+//inbound data from ESPaccessoryController
+//this gets passed onto the LocoNet host
+static void handleAccessory(void* arg, AsyncClient* client, void* data, size_t len) {
+
+	trace(Serial.printf("\nfrom AC %s \n", client->remoteIP().toString().c_str());)
+
+		//messages will be prepended with RECEIVE
+		//e.g.RECEIVE B2 00 50 1D is a sensor event, either polled-for or asynchronous
+		//this is passed on without any need for modification
+
+		//the ESPaccessoryController will support loconet directly, e.g. handle SEND etc RECEIVE or it will poll
+		//with ESPACC every 10 sec and then link to the ESPcontroller system.
+	
+		//https://medium.com/@nerudaj/tuesday-coding-tip-53-replace-all-occurrences-of-substring-in-std-string-99a4181cbb24
+}
+
+
+
+
 //inbound data from client
 static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 	//2021-01-30 timeout handling. If we see any message from a client, reset its timeout
@@ -172,6 +192,7 @@ static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 	//2021-09-09 if you have say MAX_LOCO=8 the buffer may not be big enough to capture all incoming data from loco.htm
 	//2025-09-27 if the client is DCCEX, this is recognised via <*> in the data and from that point a different handler is assigned	
 	//2025-10-22 if client is LOCONET, this is recognised via SEND in the data and from that point a different handler is assigned
+	//2026-03-30 if the client is ESPaccessory, this is recognised via ESPACC in the data and from that point a different handler is assigned
 
 	for (auto &c : clients) {
 			if (c.client == client) {
@@ -352,6 +373,26 @@ static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 		
 		}
 	}
+
+	//2026-03-30 LOCONET ACCESSORY support, any message where ESPACC is seen is for this accessory device
+	p = strstr(msg, "ESPACC");
+	if (p) {
+		for (auto& c : clients) {
+			if (c.client == client) {
+				c.HU = "ESPACC";
+				//re-assign handler to accessory handler
+				client->onData(&handleAccessory, NULL);
+				//the ESPaccessoryController will send a plain ESPACC every 10 sec as a keepalive
+				//if it has a return payload it will instead send RECEIVE msg 
+				
+				return;
+			}
+
+		}
+	}
+
+
+
 
 	//2025-12-31 DEBUG over TCP support.  This creates a withrottle entry that can be activated by sending DEBUG over TCP to the server
 	//and the system can report debug messages over it
@@ -1389,3 +1430,19 @@ void nsWiThrottle::processTimeout() {
 
 #pragma endregion
 
+
+
+
+/// <summary>
+/// passes a locoNet message through to the ESPaccessoryController
+/// </summary>
+/// <param name="msg">loconet message as a series of bytes and no preamble words</param>
+void nsWiThrottle::relayLocoNetMessage(std::string s) {
+	std::string m;
+	m.append("RELAY ");
+	m.append(s);
+	//find the ESPaccessory clients and pass the message to them
+	for (auto &c  : clients) {
+		if (c.HU == "ESPACC") queueMessage(m, c.client);
+	}
+}

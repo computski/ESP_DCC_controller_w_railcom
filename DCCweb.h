@@ -35,9 +35,6 @@ namespace nsDCCweb {
 	void broadcastChanges(void);
 	void sendJson(JsonObject& out);   //needs to be visible to railcom routines
 	void sendJson(JsonDocument out);
-	void broadcastLocoNetCommand(const char* cmd, uint16_t address, const char* state);
-	void sensorMessage(JsonDocument doc);
-
 
 	static void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length);
 	static void DCCwebWS(JsonDocument doc);
