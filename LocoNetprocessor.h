@@ -68,8 +68,9 @@ namespace nsLOCONETprocessor {
 	void handleLocoNet(void* arg, AsyncClient* client, void* data, size_t len);
 	void tokenProcessor(char* msg, AsyncClient* client);
 	void sendToClient(AsyncClient* client);
-	void asyncLocoNet(bool ack, uint8_t cvVal);
+	void asyncLocoNetProgResponse(bool ack, uint8_t cvVal);
 	void cleanExit(void);
+	void sensorMessage(uint16_t addr, const char* state);
 
 	//internal scope
 	static void queueMessage(std::string s, AsyncClient* client);

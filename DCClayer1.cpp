@@ -555,6 +555,8 @@ void railcomInit() {
 #ifndef TRACE
 	Serial.end();
 	Serial.begin(250000);
+#else
+	Serial.println(F("Railcom disabled by trace"));
 #endif // !TRACE
 
 	_rcstate = RC_EXPECT_ID0;
@@ -679,29 +681,6 @@ void railcomRead(bool lookForCTRL) {
 	_rcstate = RC_EXPECT_ID0;
 	if (lookForCTRL) _rcstate = RC_EXPECT_CTRL;
 }
-
-/*
-/// <summary>
-/// decode inbound data against the 4/8 decode table.		WE DON'T NEED THIS OVERLOAD
-/// </summary>
-/// <param name="inByte">4/8 coded serial data inbound</param>
-/// <param name="dataOut">the decoded byte</param>
-/// <param name="ignoreControlChars">ignore ACK, NACK, BUSY and only return data values</param>
-/// <returns></returns>
-bool decodeRailcom(uint8_t inByte, uint8_t* dataOut, bool ignoreControlChars) {
-	for (int i = 0; i <= RC_BUSY; i++) {
-		if (inByte == railcomTable[i]) {
-			//valid
-			*dataOut = i;
-			return true;
-		}
-		if (ignoreControlChars && (i >= 0x3F)) return false;
-	}
-	//didn't find a match
-	*dataOut = 0;
-	return false;
-}
-*/
 
 /// <summary>
 /// decode inbound data against the 4/8 decode table, overwriting inByte with its decoded value

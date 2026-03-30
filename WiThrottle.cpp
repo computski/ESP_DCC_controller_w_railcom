@@ -77,6 +77,8 @@ when user selected a loco from the server roster.
 #include <ESP8266WiFi.h>
 #include <ESPAsyncTCP.h>
 #include <vector>
+//#include <SocketIOclient.h>  //may not actually be required. libary ver 2.6.1
+
 #include "LocoNetprocessor.h"
 
 using namespace nsWiThrottle;

@@ -5,7 +5,7 @@
 #include "LocoNetprocessor.h"
 #include "Global.h"
 #include "DCCcore.h"
-#include "WiThrottle.h"  //for debug over tcp
+#include "DCCweb.h" //2026-03-25
 
 
 
@@ -96,6 +96,16 @@ Do not run the DCC_ESP WiThrottle server at the same time as linking the DCC_ESP
 Panel Pro can be used simultaneously with the turnout controls on the DCC_ESP when running as a WiThrottle server for EngineDriver, however PP will not mirror changes made
 to the turnout positions by the DCC_ESP if it is used in this fashion.
 If the JRMI laptop goes to sleep, the system may lose control of the locos as commanded by JRMI
+
+
+
+2026-03-25. Support for LocoNet AccessoryController
+the AC will connect to the DCC_ESP controller via a websocket.  The DCC_ESP controller will send JSON messages based on the LocoNet commands received.
+
+2026-03-30 the loconet AC does not have to use websockets.  we can run it as a TCP client and pass JSON.
+in fact we could just mirror the loconet messages through to it, and have the AC device decode loconet.  mind you it does need to pass back a sensor reading.
+
+this module is aware of the client that sent it a message (i.e. the laptop).  but it would need to know about the AC client, and that is handled in DCCweb in a TCP socket.
 
 
 */
@@ -216,15 +226,12 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 			
 		case OPC_GPON:
 			power.trackPower = true;
-			nsWiThrottle::queueMessage("pwr on\n","DEBUG");
 			break;
 
 		case PC_GPOFF:
 			power.trackPower = false;
-			nsWiThrottle::queueMessage("pwr off\n","DEBUG");
 			//exit service mode if we are in this
 			writeServiceCommand(0, 0, false, false, true);
-			nsWiThrottle::queueMessage("exit sm\n", "DEBUG");
 		}
 		return;
 	}
@@ -343,13 +350,14 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 			return;
 
 
-			//Next are turnout related commands
-
+			//report a sensor status as received from the sensor. In theory, this message is always from the ESPcontroller to the JRMI laptop,
+			//therefore we take no action, because we are not a relay.
 		case OPC_INPUT_REP:
-			break;
+			/* <0xB2>,<SN1>,<SN2>,<CHK>*/
+			//I think JRMI will send a sensor 'result' 0xB2 even if you wish to query a sensor, so allow B2 to decay to B1
 
+			//request a sensor status
 		case OPC_SW_REP:
-			break; //not supported
 			/* <0xB1>,<SN1>,<SN2>,<CHK> SENSOR state REPORT  NO feedback
 <SN1> =<0,A6,A5,A4- A3,A2,A1,A0>, 7 ls adr bits. A1,A0 select 1 of 4 input pairs in a DS54
 <SN2> =<0,1,I,L- A10,A9,A8,A7> Report/status bits and 4 MS adr bits.
@@ -363,17 +371,20 @@ Report/status bits and 4 MS adr bits.
 this <B1> opcode encodes current OUTPUT levels
 "C"= 0 if "Closed" ouput line is OFF, 1="closed" output line is ON (sink current)
 "T"=0 if "Thrown" output line is OFF, 1="thrown" output line is ON (sink I)
+ 
+*/
+		
+		{//scope block
+			//DS54 address logic. SN1,2 hold A10-A0, left shift these and append SN2<5> as lsb A0, giving 12 bits
+			uint16_t addr = ((tokens[2] & 0b1111)<< 7) + tokens[1];
+			addr = addr << 1;
+			addr += (tokens[2] & 0b100000) == 0 ? 0 : 1;
+			addr++;  //DCC addresses start at 1, range 1-4096
+			trace(Serial.printf("sensor a=%d\n", addr);)
+			nsDCCweb::broadcastLocoNetCommand("sensor", addr, "unknown");
+		}
 
-		DESIGN QUESTION: ESP-DCC stores turnouts in the TURNOUT[] array along with their states.
-		Because Panel Pro will contain all turnouts and their states, we don't need to store these in the ESP also
-		but it does create ambiguity on boot, because the turnout states are unknown unless PP sends a message to all of them (or asks
-		for the status of each).  Loconet does not support the idea of an ambigous state.   The turnouts as held in the ESP are all set to closed
-		on boot.
-
-		In theory, if PP was the source of truth, the B1 command is redundant and only B0 is required.
-		Note also that C and T are generally kept mutually exclusively in the 1 state.  e.g. we don't pulse C to 1 and then to zero even
-		for CD systems.  Does PP also follow this convention in its commands?
-		*/
+		break;
 
 
 		case OPC_SW_REQ:
@@ -398,6 +409,12 @@ this <B1> opcode encodes current OUTPUT levels
 			*/
 
 			actionAccessoryFromLocoNet(addr, (tokens[2] & 0b00100000) == 0 ? true : false, (tokens[2] & 0b00010000) == 0 ? false : true);
+			if ((tokens[2] & 0b00100000) == 0) {
+				nsDCCweb::broadcastLocoNetCommand("turnout", addr+1, "thrown");
+			}
+			else {
+				nsDCCweb::broadcastLocoNetCommand("turnout", addr+1, "closed");
+			}
 
 		}
 		return;
@@ -407,7 +424,7 @@ this <B1> opcode encodes current OUTPUT levels
 	switch (tokens[0]) {
 
 	case OPC_IMM_PACKET:
-		//used for multi-aspect signalling.  the DCC payload itself is captured in the tokens
+		//used for multi-aspect signalling (MAS).  the DCC payload itself is captured in the tokens
 		//<0xED>,<0B>,<7F>,<REPS>,<DHI>,<IM1>,<IM2>,<IM3>,<IM4>,<IM5>,<CHK>
 		//<REPS> D4,5,6=#IM bytes,D3=0(reserved); D2,1,0=repeat CNT
 		//<DHI >= <0, 0, 1, IM5.7 - IM4.7, IM3.7, IM2.7, IM1.7>
@@ -419,7 +436,7 @@ this <B1> opcode encodes current OUTPUT levels
 		//packet engine for transmission.  IM1,IM2 are the encoded address and IM3 is the command.  Note that IMs are 7 bits, their <7> is held in
 		//DHI
 
-	{
+	{//scope block
 		//expect 11 tokens
 		if (tokens[1] != 0x0B) return;
 
@@ -440,7 +457,23 @@ this <B1> opcode encodes current OUTPUT levels
 		//{preamble} 0 10AAAAAA 0 0BBB0AA1 0 XXXXXXXX 0 EEEEEEEE 1
 		//byte 1 is A<7-2> byte 2 BBB=A<10-8> 1s compliment, AA=A<1-0>  and byte 3 is a full 8-bit payload
 
+		//addr is wrong!  33 dcc (offset checked) generates 36 in addr var
+		//ED 0B 7F 32 01   09 71 15 00 00 38   should give 33 true dcc.
 
+		//CAUSES A CRASH
+		//we do need to decode it to send as a JSON message to the ESPaccessory controller
+		uint16_t addr = payload[1]>>4;  //BBB part
+		addr ^= 0b111; //1's compliment
+		addr = addr << 6; //move to <10-8> posn
+		addr += (payload[0] & 0b111111); //add <7-2>
+		addr = addr << 2;
+		addr += ((payload[1] & 0b110) >> 1);  //add <1-0>
+		//%.0f is decimal no dp, %02X is hex
+		snprintf(buf, 5, "%02X", payload[2]);  
+		//nsDCCweb::broadcastLocoNetCommand("MAS", addr, buf);
+		trace(Serial.printf("MAS %d %s\n", addr, buf);)
+		//Serial.println("booya");
+		
 		//final respone is LACK=<B4>,<7D>,<7F>,<chk> if CMD ok
 		queueMessage("RECEIVE 0xB4 0x7D 0x7F 0x49\n", client);
 	}
@@ -520,7 +553,7 @@ this <B1> opcode encodes current OUTPUT levels
 					return;
 				}
 				
-				if (actionPCMDfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, &asyncLocoNet)) {
+				if (actionPCMDfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, &asyncLocoNetProgResponse)) {
 					//read requested, E7 response is via an asynchronous callback
 					queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
 				}
@@ -539,7 +572,6 @@ this <B1> opcode encodes current OUTPUT levels
 				if (power.serviceMode) {
 					queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
 					//queueMessage("RECEIVE 0xB4 0x6F 0x7F 0x5B\n", client);  //found on the internet
-					nsWiThrottle::queueMessage("x-sm-x", "DEBUG");
 					return;
 				}
 
@@ -563,7 +595,7 @@ this <B1> opcode encodes current OUTPUT levels
 					//Instead it expects an E7 response and bitches if this carries no ACK, even though this is what it asked for.
 					//So we can either fake an ACK or actually test for one.
 
-				}else if (actionPCMDfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, &asyncLocoNet)) {
+				}else if (actionPCMDfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, &asyncLocoNetProgResponse)) {
 					queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
 				}
 				else{
@@ -592,10 +624,7 @@ this <B1> opcode encodes current OUTPUT levels
 /// </summary>
 void nsLOCONETprocessor::writeProgrammerTaskFinalReply(void) {
 	/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>*/
-	if (slot124Message.client == nullptr) { 
-		nsWiThrottle::queueMessage("nullp", "DEBUG");
-		return; }
-	nsWiThrottle::queueMessage("wptfr", "DEBUG");
+	if (slot124Message.client == nullptr) return;
 	char buf[5];
 	std::string m;
 	m.append("RECEIVE E7 0E 7C ");
@@ -665,18 +694,10 @@ void nsLOCONETprocessor::writeProgrammerTaskFinalReply(void) {
 /// </summary>
 /// <param name="ack">true if ACK seen, meaning data was read/written correctly</param>
 /// <param name="cvVal">cv data</param>
-void nsLOCONETprocessor::asyncLocoNet(bool ack, uint8_t cvVal) {
+void nsLOCONETprocessor::asyncLocoNetProgResponse(bool ack, uint8_t cvVal) {
 	//The call originates with sendPCMDfromLoconet() and we have already stored cv in slot124message object
 	//slot124 knows whether it was a POM or SM call, this routine does not.
-
-	char buf[12];
-	if (ack) {
-		snprintf(buf, 12, "cACK %d\n ", cvVal);
-	}
-	else {
-		snprintf(buf, 12, "cBAD %d\n ", cvVal);
-	}
-	nsWiThrottle::queueMessage(buf,"DEBUG");
+		
 	
 	/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>
 	PSTAT is <7-4> reserved <3> user abort <2> failed read (no ACK) <1> no write ACK response<0> no loco
@@ -980,6 +1001,14 @@ void nsLOCONETprocessor::cleanExit(void) {
 	}
 }
 
+/// <summary>
+/// accepts an inbound server status message, to be broadcast over locoNet
+/// </summary>
+/// <param name="addr">dcc address</param>
+/// <param name="state">sensor state</param>
+void nsLOCONETprocessor::sensorMessage(uint16_t addr, const char* state) {
+
+}
 
 
 /*thoughts on DCCpacket.repeat attribute

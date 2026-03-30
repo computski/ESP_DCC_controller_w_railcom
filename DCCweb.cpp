@@ -3,11 +3,13 @@
 #include "DCCweb.h"
 #include "DCCcore.h"
 #include "WiThrottle.h"
+#include "LocoNetprocessor.h"
+
 
 /*
 This module handles all Wifi connections, and webserver (HTTP) and Websocket connectivity
-HTTP is used to serve a static web page and then websockets are used for interaction on that page.  
-The websocket here is also used to support the JSON Throttle aka DigiTrains, if used.
+HTTP is used to serve a static web page and then websockets are used for interaction on that page.
+The websocket server here is also used to support JSON messages for LocoNet commands to an accessory controller
 
 2024-03-25 migrate from SPIFFS to LittleFS
 https://randomnerdtutorials.com/install-esp8266-nodemcu-littlefs-arduino/  and BTW you cannot do file uploads using Arduino IDE 2x
@@ -28,6 +30,12 @@ ESP8266WebServer web(80);
 
 //2021-01-29 declare as a pointer, we need to instantate once wsPort is pulled from eeprom
 WebSocketsServer* webSocket;
+
+//2026-03-25 pointer to a callback function in the locoNetprocessor
+//static void (*LocoNetcallbackPtr)(uint8_t,char*);
+//makes no sense, because when it comes to sensors, we don't initiate a read from locoNetprocessor.
+//instead the sensor event is asynchronous and we need to call a locoNetProcessor routine to send this databack over loconet
+//i.e. this module has to include LocoNetProcessor.h
 
 
 #pragma region WEBSERVER_routines
@@ -293,6 +301,7 @@ void nsDCCweb::loopWebServices(void) {
 
 
 #pragma region WEBSOCKET_routines
+//These relate to interactions on the web pages
 
 void nsDCCweb::webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) { // When a WebSocket message is received
 	
@@ -331,6 +340,13 @@ void nsDCCweb::webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size
 			nsDCCweb::DCCwebWS(doc);
 			return;
 		}
+
+		if (strcmp(sType, "locoNet") == 0) {
+			//callout to locoNetprocessor module
+			//nsDCCweb::DCCwebWS(doc);
+			return;
+		}
+
 
 	}//end switch
 }//end websocket event
@@ -930,11 +946,6 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 }
 
 
-
-
-
-
-
 /// <summary>
 /// Check parameters against a nominated loco slot
 /// </summary>
@@ -985,7 +996,6 @@ bool nsDCCweb::changeToSlot(uint8_t slot, const char* address, bool useLong, boo
 	return false;
 
 }
-
 
 
 /// <summary>
@@ -1089,7 +1099,7 @@ void nsDCCweb::broadcastSMreadResult(uint16_t cvReg, int16_t cvVal) {
 /// <param name="cvVal">value read back, negative if fail</param>
 /// <param name="addrType">A|L|S</param>
 /// <param name="addr">loco or accessory address</param>
-void nsDCCweb::broadcastPOMreadResult(uint16_t cvReg, int16_t cvVal,char addrType,uint16_t address) {
+void nsDCCweb::broadcastPOMreadResult(uint16_t cvReg, int16_t cvVal, char addrType, uint16_t address) {
 	//this routine is a callback from DCCcore
 	JsonDocument out;
 	char buffer[8];
@@ -1109,10 +1119,40 @@ void nsDCCweb::broadcastPOMreadResult(uint16_t cvReg, int16_t cvVal,char addrTyp
 	else {
 		out["cvVal"] = cvVal;
 	}
+
 	sendJson(out);
 }
 
 
+void nsDCCweb::broadcastPOMreadResultDEBUG(uint16_t cvReg, int16_t cvVal, char addrType, uint16_t address, bool validPtr) {
+	JsonDocument out;
+	char buffer[8];
+	char* ptr = buffer;
+	itoa(address, ++ptr, 10);
+	buffer[0] = addrType;
+
+	out["type"] = "dccUI";
+	out["cmd"] = "pom";
+	out["action"] = "payload";
+	out["cvReg"] = cvReg;
+	out["addr"] = buffer;
+	//the value will be -1 if read failed
+	if (cvVal < 0) {
+		out["cvVal"] = "???";
+	}
+	else {
+		out["cvVal"] = cvVal;
+	}
+	if (validPtr) {
+		out["ptrValid"] = 1;
+	}
+	else {
+		out["ptrValid"] = 0;
+
+	}
+
+	sendJson(out);
+}
 
 
 //broadcast any turnout changes that occurred outside of this module
@@ -1173,3 +1213,75 @@ void nsDCCweb::broadcastChanges(void) {
 
 #pragma endregion
 
+#pragma region WEBSOCKET_loconet
+//relates to a proprietary JSON message protocol to allow decoded locoNet messages to be exchanged with 
+//my proprietary locoNet accessory controller
+
+
+/// <summary>
+/// send a loconet command; turnout event, MAS event or a sensor query
+/// </summary>
+/// <param name="cmd">turnout|MAS|sensor</param>
+/// <param name="address">DCC address 1-4096</param>
+/// <param name="state">commanded state; thrown|closed|hex MAS value</param>
+void nsDCCweb::broadcastLocoNetCommand(const char* cmd,uint16_t address,const char* state) {
+	JsonDocument out;
+	out["type"] = "locoNet";
+	out["address"] = address;
+
+	if (cmd == nullptr) return;
+	bool validated = false;
+	out["cmd"] = cmd;
+
+	if (strcmp(cmd, "turnout") == 0) {
+		if (state == nullptr) return;
+		out["state"] = state;
+		validated = true;
+	}
+
+	if (strcmp(cmd, "MAS") == 0) {
+		if (state == nullptr) return;
+		out["state"] = state; //strtol(state, NULL, 16); //or a hex value
+		validated = true;
+	}
+
+	if (strcmp(cmd, "sensor") == 0) {
+		out["state"] = "unknown";
+		validated = true;
+	}
+
+	if (validated) sendJson(out);
+	return;
+}
+
+/// <summary>
+/// handles inbound JSON message from locoNet accessory controller, this needs to be passed up to the locoNetprocessor module
+/// </summary>
+/// <param name="doc">JSON message doc</param>
+void nsDCCweb::sensorMessage(JsonDocument doc) {
+	//nsLOCONETprocessor::sendToClient(nullptr);  //can compiler see this? NO, not without an include
+
+	//inbound JSON message from locoNet accessory controller, this needs to be passed up to the locoNetprocessor module
+
+
+	const char* cmd = doc["cmd"];
+	if (cmd == nullptr) return;
+
+	//expect type:locoNet, cmd:sensor, address:6, state:active|inactive|uknown
+	//note: the AC itself will wire-or actives on the same address..  e.g. if pin 6 and 7 both are given address 42, then active on either|both will send active back
+	//unknown denotes there is no sensor at given address, would be in response to a poll
+	if (strcmp(cmd, "sensor") == 0) {
+		const char* a = doc["address"];
+		const char* s = doc["state"];
+		uint16_t addr = atoi(a);
+
+		nsLOCONETprocessor::sensorMessage(addr, s);
+
+		return;
+	}
+	return;
+
+	
+}
+
+#pragma endregion

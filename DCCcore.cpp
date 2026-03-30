@@ -1466,7 +1466,8 @@ bool actionPCMDfromLoconet(uint8_t PCMD, uint16_t addr, uint16_t cv, uint8_t dat
 
 	}//end POM
 	
-	//SERVICE MODE routines.  Note: DCCpacketEngine has to execute callbacks to loconet::asyncLocoNet()
+	//SERVICE MODE routines.  Note: DCCpacketEngine has to execute callbacks to loconet::asyncLocoNetProgResponse()
+	//see top of file for LocoNetCallbackPtr
 	//enter service mode
 	writeServiceCommand(0, 0, false, true, false); 
 		
@@ -3817,7 +3818,8 @@ void railcomCallback(uint8_t result, uint8_t ctrl, bool success) {
 
 
 		if (success){
-			nsDCCweb::broadcastPOMreadResult(m_pom.cvReg,result,addrType,m_pom.address);
+			nsDCCweb::broadcastPOMreadResult(m_pom.cvReg, result, addrType, m_pom.address);
+			//nsDCCweb::broadcastPOMreadResultDEBUG(m_pom.cvReg, result, addrType, m_pom.address, LocoNetcallbackPtr ? true:false);
 		}
 		else {
 			nsDCCweb::broadcastPOMreadResult(m_pom.cvReg, -1, addrType, m_pom.address);

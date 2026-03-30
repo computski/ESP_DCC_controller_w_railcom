@@ -30,10 +30,15 @@ namespace nsDCCweb {
 	void broadcastPower(void);
 	void broadcastSMreadResult(uint16_t cvReg, int16_t cvVal);
 	void broadcastPOMreadResult(uint16_t cvReg, int16_t cvVal, char addrType, uint16_t address);
+	void broadcastPOMreadResultDEBUG(uint16_t cvReg, int16_t cvVal, char addrType, uint16_t address, bool validPtr);
+
 	void broadcastChanges(void);
 	void sendJson(JsonObject& out);   //needs to be visible to railcom routines
 	void sendJson(JsonDocument out);
-	
+	void broadcastLocoNetCommand(const char* cmd, uint16_t address, const char* state);
+	void sensorMessage(JsonDocument doc);
+
+
 	static void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length);
 	static void DCCwebWS(JsonDocument doc);
 	static bool changeToTurnout(uint8_t slot, uint16_t address, const char* name);
