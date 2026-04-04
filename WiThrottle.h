@@ -67,6 +67,7 @@ namespace nsWiThrottle {
 	void processTimeout();
 	uint8_t clientCount(void);
 	void queueMessage(std::string s, std::string identifier);  //overload for debug messages
+	void queueMessage(std::string s, AsyncClient* client);
 	void relayLocoNetMessage(std::string s);
 
 
@@ -75,7 +76,6 @@ namespace nsWiThrottle {
 	static int8_t doThrottleCommand(void *data, AsyncClient *client);
 	static void sendToClient(char *data, AsyncClient *client);
 	static void sendToClient(std::string s, AsyncClient *client);
-	static void	queueMessage(std::string s, AsyncClient *client);
 	static void setPower(bool powerOn);
 	static int8_t addReleaseThrottle(AsyncClient *client, char MT, char *address, bool doAdd);
 	static bool checkDoSteal(char *address, bool checkOnly, bool &isConsist);

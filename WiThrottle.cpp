@@ -166,10 +166,9 @@ static void handleError(void* arg, AsyncClient* client, int8_t error) {
 }
 
 
-//inbound data from ESPaccessoryController
-//this gets passed onto the LocoNet host
-static void handleAccessory(void* arg, AsyncClient* client, void* data, size_t len) {
-
+//Passes inbound data from ESPaccessoryController to all LocoNet clients
+//passed verbatim and ultimately back to JRMI
+static void handleAccessoryData(void* arg, AsyncClient* client, void* data, size_t len) {
 	trace(Serial.printf("\nfrom AC %s \n", client->remoteIP().toString().c_str());)
 
 		//messages will be prepended with RECEIVE
@@ -178,14 +177,25 @@ static void handleAccessory(void* arg, AsyncClient* client, void* data, size_t l
 
 		//the ESPaccessoryController will support loconet directly, e.g. handle SEND etc RECEIVE or it will poll
 		//with ESPACC every 10 sec and then link to the ESPcontroller system.
-	
+
 		//https://medium.com/@nerudaj/tuesday-coding-tip-53-replace-all-occurrences-of-substring-in-std-string-99a4181cbb24
+
+
+		std::string msg((const char*)data, len);
+		queueMessage(msg, "LN");
+		
+		/*
+		for (auto& c : clients) {
+			if (c.HU == "LN") 	queueMessage(msg, c.client);  //
+		
+		}
+		*/
 }
 
 
 
 
-//inbound data from client
+//inbound data from (WiThrottle) client
 static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 	//2021-01-30 timeout handling. If we see any message from a client, reset its timeout
 	//2021-02-03 keep seeing timeouts. Make timeout double the period that the client was instructed to respond on. 
@@ -381,7 +391,8 @@ static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 			if (c.client == client) {
 				c.HU = "ESPACC";
 				//re-assign handler to accessory handler
-				client->onData(&handleAccessory, NULL);
+				client->onData(&handleAccessoryData, NULL);
+				
 				//the ESPaccessoryController will send a plain ESPACC every 10 sec as a keepalive
 				//if it has a return payload it will instead send RECEIVE msg 
 				
@@ -1000,20 +1011,19 @@ void nsWiThrottle::queueMessage(std::string s, AsyncClient *client) {
 }
 
 /// <summary>
-/// queue a message for a specific client identifier
+/// queue a message for a specific client identifier, or multiple clients if they have the same identifier
 /// </summary>
 /// <param name="s">message</param>
-/// <param name="identifier">client id such as DEBUG</param>
+/// <param name="identifier">client id such as LN,ESPACC,DEBUG</param>
 void nsWiThrottle::queueMessage(std::string s, std::string identifier) {
 	for (auto c : clients) {
-		if (c.HU == "DEBUG") {
-			if (c.client == nullptr) return;
-			CLIENTMESSAGE m;
-			m.toClient = c.client;
-			m.msg = s;
-			messages.push_back(m);
-		}
-		return;
+		if (c.HU != identifier) continue;
+		if (c.client == nullptr) continue;
+		CLIENTMESSAGE m;
+		m.toClient = c.client;
+		m.msg = s;
+		messages.push_back(m);
+		Serial.printf("qM2 %s\n", s.c_str());
 	}
 }
 
@@ -1214,26 +1224,20 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 	for (auto c : clients) {
 		//clear msg
 		m.clear();
-		if (c.isDCCEX()){ 
-			//2025-12-18 no support for DCCEX clients
-			continue;  }
-
-		if (c.isLOCONET()) {
-			nsLOCONETprocessor::sendToClient(c.client);
-			continue;
-		}
-
+		
 		//loop through all throttles per specific client, then for each loco found thereunder, add it to
 		//the block message
 		for (auto& throttle : throttles) {
 			//2020-11-25 special case for solo throttles, these are stored as 36d but need to be emitted as T
 			memset(myT, '\0', sizeof(myT));
-			
 		
 			//2021-02-01 .MT is a single char, can be alpha numeric, was captured as an ascii code originally
 			myT[0] = throttle.MT;
 
-			if (c.client == throttle.toClient) {
+		//2026-04-04 LocoNet, ESPACC and DCCEX clients will not have throttles associated with them
+		if (c.client != throttle.toClient) continue;
+
+			//if (c.client == throttle.toClient) {
 				//client matches.  we need to transmit all MTs on this client if they have changes
 				bool isConsistent = false;
 
@@ -1347,10 +1351,12 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 						m.append(buf);
 					}
 				}//function
-			}//ip client match
+		//	}//ip client match
+		
 		}//loop for throttle
 
 		//2020-11-27 append any client specific message
+		//2026-04-04 and these might be messages for LN or ESPACC clients
 		for (auto g : messages) {
 			if ((g.toClient == nullptr) || (g.toClient == c.client)) {
 				m.append(g.msg);
@@ -1362,11 +1368,12 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 trace(
 		if (m.length() > 0) {
 			Serial.println(F("\nWIT BCAST"));
-			Serial.printf("%s\n", m.c_str());
+			Serial.printf("%s %s\n",c.HU.c_str(), m.c_str());
 			Serial.println(F("WIT BCAST END"));
 		}
 )
 		sendToClient(m, c.client);
+		
 
 	}//per client loop
 		
@@ -1410,20 +1417,16 @@ void nsWiThrottle::processTimeout() {
 			//if the client reconnects, we then use the HU to re-associate with the throttles.
 
 			for (auto &t : throttles) {
-				if (t.toClient == c.client) {
-					loco[t.locoSlot].speed = 0;
-					loco[t.locoSlot].speedStep = 0;
-					loco[t.locoSlot].changeFlag = true;
-					//do not flag for garbage collection
-					//t.MTaction = MT_GARBAGE;
-					trace(Serial.printf("clnt timeout %d\r\n", loco[t.locoSlot].address);)
-				}
-				
+				if (t.toClient != c.client) continue;
+				loco[t.locoSlot].speed = 0;
+				loco[t.locoSlot].speedStep = 0;
+				loco[t.locoSlot].changeFlag = true;
+				//do not flag for garbage collection
+				//t.MTaction = MT_GARBAGE;
+				trace(Serial.printf("clnt timeout %d\r\n", loco[t.locoSlot].address);)	
 			}
-
-
 		}
-		
+
 	}
 }
 
@@ -1434,10 +1437,14 @@ void nsWiThrottle::processTimeout() {
 
 
 /// <summary>
-/// passes a locoNet message through to the ESPaccessoryController
+/// passes a locoNet message through to the ESPaccessoryController. The regular LocoNet-over-TCP protocol prefixes the payload with
+/// SEND and then expects to see that same payload echoed prefixed with RECEIVE.  I don't think this is useful, so will send one-way as RELAY
+/// and then the ESPA can respond with RECEIVE [sensor payload] or nothing if its a turnout or signal command.
+/// 
 /// </summary>
 /// <param name="msg">loconet message as a series of bytes and no preamble words</param>
 void nsWiThrottle::relayLocoNetMessage(std::string s) {
+	
 	std::string m;
 	m.append("RELAY ");
 	m.append(s);

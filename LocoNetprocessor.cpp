@@ -8,7 +8,21 @@
 #include "WiThrottle.h"
 
 
+/*loconet debug 2026-04-04
+at present, if we see a loconet turnout command inbound (port 2560) we try to respond with a RECEIVE B2 message spoofing a sensor.  it does not work, and i suspect
+the reason is we are pending a message echo and sent ok message outbound on port 2560 after the turnout command and this is blocking our RECEIVE B2.
 
+But... if we have a tcp client ESPACC this can send a RECEIVE message up to the ESPC.  The ESPC relays this to PP.  so why doesn't this work?
+ESPACC also uses port 2560 but its a separate client.
+
+Setup.  TCP client on .128:2560 send SENDxxx which makes it a PP client. [A]
+2nd TCP client on .128:2560 send ESPACC, which makes it an ESPACC client. [B]
+
+data sent on [A] is send as a RELAY messge to B.  e.g. RELAY B2 00 50 1D
+but stuff I try and send back from [B], does not appear on [A], even though it does appear on the serial port... hmm.
+
+
+*/
 
 
 /*LocoNet support 2026-02
@@ -54,6 +68,9 @@ decoder could detonate.  Perhaps the DP designers' assumption was the controller
 Note: DP does not support POM-read via Railcom for entire pages of CVs, but it does support individual CV reads on POM under the CVs tab.
 
 Note: JRMI Decoder Pro (DP) does not seem to recognise it has lost the TCP connection and does not attempt a re-initialise of LocoNet.  You have to manually restart DP.
+
+Known bug: trailing spaces in the token string will cause an incorrect token count and failure to action the message
+e.g. SEND B2 00 40 0D <LF> space before the linefeed, means a 5 token message
 
 
  **** SPECIFIC behaviours ****
@@ -120,7 +137,7 @@ in DCCweb
 
 using namespace nsLOCONETprocessor;
 
-static std::vector<CLIENTMESSAGE> messages;
+//2026-04-04 deprecated static std::vector<CLIENTMESSAGE> messages;
 
 
 //use this struct to hold decoder programming messages and because the response is async we need to hold a pointer
@@ -223,6 +240,7 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 	//if checksum fails, ignore the message
 	if (checksum != 0xFF) { return;	}
 	
+
 	queueMessage(m, client);
 	m.clear();
 			
@@ -293,7 +311,7 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 
 			if (systemSlot == -1) {
 				//no free slots, send OPC_LONG_ACK 0xB4 0xBF 0x00 0xF4
-				queueMessage("RECEIVE 0xB4 0xBF 0x00 0xF4", client);
+				queueMessage("RECEIVE B4 BF 00 F4", client);
 				return;
 			}
 
@@ -360,14 +378,9 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 			return;
 
 
-			//report a sensor status as received from the sensor. In theory, this message is always from the ESPcontroller to the JRMI laptop,
-			//therefore we take no action, because we are not a relay.
-		case OPC_INPUT_REP:
+		case OPC_SW_REP://request a sensor status, decays to 0xB2 handler.  Panel Pro sends B2 instead of B1
+		case OPC_INPUT_REP:  //report a sensor status
 			/* <0xB2>,<SN1>,<SN2>,<CHK>*/
-			//I think JRMI will send a sensor 'result' 0xB2 even if you wish to query a sensor, so allow B2 to decay to B1
-
-			//request a sensor status
-		case OPC_SW_REP:
 			/* <0xB1>,<SN1>,<SN2>,<CHK> SENSOR state REPORT  NO feedback
 <SN1> =<0,A6,A5,A4- A3,A2,A1,A0>, 7 ls adr bits. A1,A0 select 1 of 4 input pairs in a DS54
 <SN2> =<0,1,I,L- A10,A9,A8,A7> Report/status bits and 4 MS adr bits.
@@ -383,14 +396,18 @@ this <B1> opcode encodes current OUTPUT levels
 "T"=0 if "Thrown" output line is OFF, 1="thrown" output line is ON (sink I)
  
 */
+
+			//all we do is relay this message on to the ESP Accessory controller
+			nsWiThrottle::relayLocoNetMessage(msgCopy);
 		
 		{//scope block
 			//2026-03-30 new
-			nsWiThrottle::relayLocoNetMessage(msgCopy);
+			//nsWiThrottle::relayLocoNetMessage(msgCopy);
 
 
-			//DS54 address logic. SN1,2 hold A10-A0, left shift these and append SN2<5> as lsb A0, giving 12 bits
-			
+			//Digitrax DS54 address logic. SN1,2 hold A10-A0, left shift these and append SN2<5> as lsb A0, giving 12 bits
+			//this logic needs to go into the ESPACC
+
 			/*2026-03-30 deprecated
 			uint16_t addr = ((tokens[2] & 0b1111)<< 7) + tokens[1];
 			addr = addr << 1;
@@ -430,8 +447,18 @@ this <B1> opcode encodes current OUTPUT levels
 			writeTurnout(addr, closed, onState);  //DEPRECATED
 			*/
 
-			/*2026-03-30 deprecated
 			actionAccessoryFromLocoNet(addr, (tokens[2] & 0b00100000) == 0 ? true : false, (tokens[2] & 0b00010000) == 0 ? false : true);
+
+			//DEBUG send a sensor message  NONE of these work.
+			//queueMessage("RECEIVE B2 00 40 OD", client);  //attempt #1
+			//queueMessage("RECEIVE 0xB2 0x00 0x40 0xOD", client);  //attempt #2
+			//queueMessage("SEND B2 00 40 OD", client);  //attempt #3
+			//queueMessage("SEND 0xB2 0x00 0x40 0xOD", client);  //attempt #4
+
+
+
+
+			/*2026-03-30 deprecated
 			if ((tokens[2] & 0b00100000) == 0) {
 				nsDCCweb::broadcastLocoNetCommand("turnout", addr+1, "thrown");
 			}
@@ -943,9 +970,15 @@ void nsLOCONETprocessor::writeTurnout(uint16_t addr, bool closed, bool onState) 
 /// that have been queued up.  It will iterate the message queue.
 /// </summary>
 /// <param name="client">specific client to send to, cannot be nullptr</param>
+
+/*
 void nsLOCONETprocessor::sendToClient(AsyncClient* client) {
+	//nsWiThrottle::broadcastChanges is called regularly in main loop.  In turn it calls 
+	//nsLOCONETprocessor::sendToClient
+	
 	if (messages.empty()) return;
 	if (client == nullptr) return;
+	trace(Serial.println("LNPS2C");)
 
 	std::string outBoundMessage;
 	outBoundMessage.clear();
@@ -989,7 +1022,7 @@ void nsLOCONETprocessor::sendToClient(AsyncClient* client) {
 
 
 }
-
+*/
 
 
 /// <summary>
@@ -998,11 +1031,19 @@ void nsLOCONETprocessor::sendToClient(AsyncClient* client) {
 /// <param name="s">standard string containing message</param>
 /// <param name="client">spcific client, or all if nullptr</param>
 void nsLOCONETprocessor::queueMessage(std::string s, AsyncClient* client) {
+
+	//2026-04-04 we don't know what type of client we have.  that's fine if we are processing a loconet message send-receive-sentok because this is going
+	//back to the same client that originated it.  but if we have an ESPACC message to process, we want to send this to all LN clients.  Actually we can do 
+	//that by handing the inbound traffic in WiThrottle
+
+
+	nsWiThrottle::queueMessage(s, client);
+	/*
 	CLIENTMESSAGE m;
 	m.toClient = client;
 	m.msg = s;
 	messages.push_back(m);
-	
+	*/
 }
 
 /// <summary>
@@ -1028,14 +1069,8 @@ void nsLOCONETprocessor::cleanExit(void) {
 	}
 }
 
-/// <summary>
-/// accepts an inbound server status message, to be broadcast over locoNet
-/// </summary>
-/// <param name="addr">dcc address</param>
-/// <param name="state">sensor state</param>
-void nsLOCONETprocessor::sensorMessage(uint16_t addr, const char* state) {
 
-}
+
 
 
 /*thoughts on DCCpacket.repeat attribute
