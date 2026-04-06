@@ -21,3 +21,5 @@ The 6N137 also has a gating input on the output stage, and we drive this from ra
 2025-11-05 adding support for JMRI and LocoNet over TCP.  Work in progress.
 
 2026-02-19 LocoNet working, added support for OPC_IMM dcc immediate messages which allows use of multi aspect signals
+
+2026-04-05 LocoNet bidirectional messages to Panel Pro working, additionally support for ESPACC accessory controller on the WiThrottle port
