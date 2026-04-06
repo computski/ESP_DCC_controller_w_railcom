@@ -57,31 +57,20 @@ namespace nsLOCONETprocessor {
 
 	//duplicate of the CLIENTMESSAGE structure from the nsWiThrottle namespace
 	//this one will hold LocoNet protocol messages
-	
-	/*2026-04-04 deprecated
-	struct CLIENTMESSAGE
-	{
-		std::string msg;   //safer inside a vector, will avoid memory leaks
-		AsyncClient* toClient;  //pointer to specific client, nullptr=all clients
-	};
-	*/
 
 
 	void handleLocoNet(void* arg, AsyncClient* client, void* data, size_t len);
 	void tokenProcessor(char* msg, AsyncClient* client);
-	//deprecated void sendToClient(AsyncClient* client);
 	void asyncLocoNetProgResponse(bool ack, uint8_t cvVal);
 	void cleanExit(void);
 	
 
 	//internal scope
-	static void queueMessage(std::string s, AsyncClient* client);
 	static void setPower(bool powerOn);
 	static std::string FN_OPC_SL_RD_DATA(int8_t locoSlot);
 	static void writeDIRF_SPD(uint8_t* dirf, uint8_t* spd, void* loc);
 	static void* getSytemSlotPtr(uint8_t locoNetSlot);
 	static void writeProgrammerTaskFinalReply(void);
-	//static void writeTurnout(uint16_t addr, bool closed, bool onState);  DEPRECATED
 }
 
 

@@ -7,25 +7,7 @@
 #include "DCCcore.h"
 #include "WiThrottle.h"
 
-
-/*loconet debug 2026-04-04
-at present, if we see a loconet turnout command inbound (port 2560) we try to respond with a RECEIVE B2 message spoofing a sensor.  it does not work, and i suspect
-the reason is we are pending a message echo and sent ok message outbound on port 2560 after the turnout command and this is blocking our RECEIVE B2.
-
-But... if we have a tcp client ESPACC this can send a RECEIVE message up to the ESPC.  The ESPC relays this to PP.  so why doesn't this work?
-ESPACC also uses port 2560 but its a separate client.
-
-Setup.  TCP client on .128:2560 send SENDxxx which makes it a PP client. [A]
-2nd TCP client on .128:2560 send ESPACC, which makes it an ESPACC client. [B]
-
-data sent on [A] is send as a RELAY messge to B.  e.g. RELAY B2 00 50 1D
-but stuff I try and send back from [B], does not appear on [A], even though it does appear on the serial port... hmm.
-
-
-*/
-
-
-/*LocoNet support 2026-02
+/*LocoNet support 2026-04
 
 The base protocol for loconet is found in the loconet personal edition https://www.digitrax.com/support/loconet/loconetpersonaledition.pdf
 JRMI Decoder Pro (DP) and Panel Pro (PP) uses loconet over TCP which has additional message prefixes https://loconetovertcp.sourceforge.net/Protocol/LoconetOverTcp.html
@@ -116,29 +98,26 @@ If the JRMI laptop goes to sleep, the system may lose control of the locos as co
 
 
 
-2026-03-30. Support for LocoNet ESPAccessoryController
-the AC will connect to the DCC_ESP controller via TCP.  The DCC_ESP controller will relay the relevant loconet commands verbatim to the AC.
+2026-04-04. Support for LocoNet ESPAccessoryController (ESPA)
+the ESPA will connect to the DCC_ESP controller via TCP.  The DCC_ESP controller will relay the relevant loconet commands verbatim to all ESPA(s),
+and anything received will be relayed verbatim to all the loconet LN clients
 The following are relayed
 OPC_IMM_PACKET: this is related to MAS signalling
 OPC_INPUT_REP: instruction/query to/from a sensor
 OPC_SW_REP: request a sensor status
 OPC_SW_REQ: command a turnout
-In all cases the whole token string is sent to the AccessoryController and prefixed with RELAY
 
-The AccessoryController also asyncrhonously sends OPC_INPUT_REP sensor state changes to this ESP_controller, and the controller will post them on
-to the JRMI Loconet host prefixed with RECEIVE
+The AccessoryController also asyncrhonously sends OPC_INPUT_REP sensor state changes to this ESP_controller, since these are passed transparently, the
+ESPA needs to prefix the messages RECEIVE
 
-same issue when relaying the incoming loconet command.  this module doesn't have visiblity of all clients to find the ESPACC clients.  so this should be handled
-in DCCweb
+2026-04-04 when the ESP controller switches a turnout in its own roster, we want to transmit this to all ESPACC devices.
+This happens fromKey and alsoFromWiT but both will set a turnout[].changeFlag
+we leverage nsWiThrottle::queueTurnouts() to prepare a locoNet message to send to LN and ESPACC clients
 
+2026-04-04 note, whilst it is possible for the ESPACC to send a RECIEVE turnout message, in practice it will do so only in response to a  
 */
 
-
-
 using namespace nsLOCONETprocessor;
-
-//2026-04-04 deprecated static std::vector<CLIENTMESSAGE> messages;
-
 
 //use this struct to hold decoder programming messages and because the response is async we need to hold a pointer
 //to the client that launched the original programmer task.
@@ -221,8 +200,9 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 	m.append(msg);
 	m.append("\nSENT OK\n");
 	
-	//retain a copy of the loconet message
+	//retain a copy of the loconet message, but prefix with SEND
 	std::string msgCopy;
+	msgCopy = "SEND ";
 	msgCopy.append(msg);
 
 	char* tokenSplit = strtok(msg, " ");
@@ -238,10 +218,12 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 	for (auto t : tokens) {	checksum ^= t;}
 
 	//if checksum fails, ignore the message
-	if (checksum != 0xFF) { return;	}
+	if (checksum != 0xFF) { 
+		trace(Serial.println("checksum fail");)
+		return;	}
 	
 
-	queueMessage(m, client);
+	nsWiThrottle::queueMessage(m, client);
 	m.clear();
 			
 	//process TWO-TOKEN messages
@@ -272,7 +254,7 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 		case OPC_RQ_SL_DATA:
 			//request slot data/status block
 			//tokens[2], if non zero is a request for expanded slot format.  I don't have the specification for this.
-			queueMessage(FN_OPC_SL_RD_DATA(tokens[1]), client);
+			nsWiThrottle::queueMessage(FN_OPC_SL_RD_DATA(tokens[1]), client);
 			break;
 
 		case OPC_LOCO_ADR:
@@ -311,7 +293,7 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 
 			if (systemSlot == -1) {
 				//no free slots, send OPC_LONG_ACK 0xB4 0xBF 0x00 0xF4
-				queueMessage("RECEIVE B4 BF 00 F4", client);
+				nsWiThrottle::queueMessage("RECEIVE B4 BF 00 F4", client);
 				return;
 			}
 
@@ -319,11 +301,11 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 			//BUT if we just allocated or bumped a slot then loco[] object itself won't have its address set.  We need to do this now
 			locoPtr = &loco[systemSlot];
 			locoPtr->useLongAddress = buf[0] == 'L' ? true : false;
-			locoPtr->address = atoi(buf + 1);
+			locoPtr->address = strtol(buf + 1,NULL,10);
 
 			//0xE7 0x0E SLOT# STAT1 ADR SPD DIRF TRK SS2 ADR2 SND ID1 ID2 CHK
 			//locoNetSlot is indexed 1 above the systemSlot
-			queueMessage(FN_OPC_SL_RD_DATA(systemSlot + 1), client);
+			nsWiThrottle::queueMessage(FN_OPC_SL_RD_DATA(systemSlot + 1), client);
 			break;
 		}//end scope block
 
@@ -337,7 +319,7 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 				if (locoPtr) {
 					//valid locoNet slots are 1 to 127 but we need to translate this to 0 to MAX_LOCO-1
 					locoPtr->LocoNetSTATUS1 |= 0b110000;  //set <5,4> of STATUS1. IN_USE slot refreshed
-					queueMessage(FN_OPC_SL_RD_DATA(tokens[1]), client);
+					nsWiThrottle::queueMessage(FN_OPC_SL_RD_DATA(tokens[1]), client);
 				}
 			}
 			return;
@@ -529,7 +511,7 @@ this <B1> opcode encodes current OUTPUT levels
 		*/
 
 		//final respone is LACK=<B4>,<7D>,<7F>,<chk> if CMD ok
-		queueMessage("RECEIVE 0xB4 0x7D 0x7F 0x49\n", client);
+		nsWiThrottle::queueMessage("RECEIVE 0xB4 0x7D 0x7F 0x49\n", client);
 	}
 			break;
 
@@ -603,17 +585,17 @@ this <B1> opcode encodes current OUTPUT levels
 				//to the B4 LACK messages.
 
 				if (ServiceModeBusy()) {  //this is a function call to DCCcore
-					queueMessage("RECEIVE 0xB4 0x7F 0x00 0x34\n", client);  //LACK and busy
+					nsWiThrottle::queueMessage("RECEIVE 0xB4 0x7F 0x00 0x34\n", client);  //LACK and busy
 					return;
 				}
 				
 				if (actionPCMDfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, &asyncLocoNetProgResponse)) {
 					//read requested, E7 response is via an asynchronous callback
-					queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
+					nsWiThrottle::queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
 				}
 				else
 				{	//operation not supported
-					queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
+					nsWiThrottle::queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
 				}
 				
 				return;
@@ -624,7 +606,7 @@ this <B1> opcode encodes current OUTPUT levels
 
 				//if controller is still in service mode then reject the request.  DP will timeout with a 306 error.
 				if (power.serviceMode) {
-					queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
+					nsWiThrottle::queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
 					//queueMessage("RECEIVE 0xB4 0x6F 0x7F 0x5B\n", client);  //found on the internet
 					return;
 				}
@@ -650,11 +632,11 @@ this <B1> opcode encodes current OUTPUT levels
 					//So we can either fake an ACK or actually test for one.
 
 				}else if (actionPCMDfromLoconet(slot124Message.PCMD, slot124Message.address, slot124Message.cv, slot124Message.cvData, &asyncLocoNetProgResponse)) {
-					queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
+					nsWiThrottle::queueMessage("RECEIVE 0xB4 0x7F 0x01 0x35\n", client);  //LACK and will respond with E7
 				}
 				else{
 					//operation not supported
-					queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
+					nsWiThrottle::queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
 				}
 
 			
@@ -723,7 +705,7 @@ void nsLOCONETprocessor::writeProgrammerTaskFinalReply(void) {
 	m.append("00 00 ");
 	snprintf(buf, 5, "%02X \n", checksum);  // newline char essential here, else DP will fail to process the message
 	m.append(buf);
-	queueMessage(m, slot124Message.client);
+	nsWiThrottle::queueMessage(m, slot124Message.client);
 	
 	/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>*/
 
@@ -935,116 +917,7 @@ void nsLOCONETprocessor::writeDIRF_SPD( uint8_t* dirf, uint8_t* spd, void* loc) 
 
 }
 	
-/*DEPRECATED
-/// <summary>
-/// Send a turnout command to line.  Only "on" is supported, "off" messages are ignored.  This means multiple simultaneous signal aspects cannot be commanded.
-/// With turnouts most control units will react to "on" only and consider Thrown and Closed as mutually exclusive.
-/// </summary>
-/// <param name="addr">zero based Loconet turnout address</param>
-/// <param name="closed">true if addressing the closed-solenoid</param>
-/// <param name="onState">true to energise, false to de-energise (ignored)</param>
-void nsLOCONETprocessor::writeTurnout(uint16_t addr, bool closed, bool onState) {
-	//does not support transmission of 'off' state at present
-	if (!onState) return;
-	//i is the index of the turnout slot. 1-based address.
-	uint8_t i = findTurnout(addr+1);
 
-	if (i > MAX_TURNOUT) return;
-
-	//note, turnout[i].selected is a HUI feature, we do not need to change it
-	//name is a feature in the local roster, Panel Pro does not need to know this or interact with it
-	turnout[i].thrown = !closed;
-	turnout[i].changeFlag = true;
-
-	trace(Serial.printf("writeTurnout %d\n",addr+1);)
-	
-	return;
-
-}
- */
-
-
-
-/// <summary>
-/// Transmit queued messages to a specific client. This will also transmit any broadcast messages
-/// that have been queued up.  It will iterate the message queue.
-/// </summary>
-/// <param name="client">specific client to send to, cannot be nullptr</param>
-
-/*
-void nsLOCONETprocessor::sendToClient(AsyncClient* client) {
-	//nsWiThrottle::broadcastChanges is called regularly in main loop.  In turn it calls 
-	//nsLOCONETprocessor::sendToClient
-	
-	if (messages.empty()) return;
-	if (client == nullptr) return;
-	trace(Serial.println("LNPS2C");)
-
-	std::string outBoundMessage;
-	outBoundMessage.clear();
-
-	//build the outBoundMessage from client specific messages plus any broadcast messages
-	for (auto m : messages) {
-		if ((m.toClient == nullptr) || (m.toClient == client)) {
-			outBoundMessage.append(m.msg);
-		}
-	}
-
-	//find specific client messages or nullptr broadast, and send
-	//const char *data = s.c_str(); will cause a crash if you use it to call client->add
-	//need to copy the data to a new array
-
-	if (outBoundMessage.size() > 0) {
-		char* data = new char[outBoundMessage.size() + 1];
-		copy(outBoundMessage.begin(), outBoundMessage.end(), data);
-		data[outBoundMessage.size()] = '\0';
-
-		//send over TCP/IP
-		if (client->space() > sizeof(data) && client->canSend()) {
-			client->add(data, strlen(data));
-			client->send();
-		}
-
-		//we used new to create *data.  delete now else you create a memory leak
-		delete data;
-
-		//2025-11-02 now delete any client-specific messages (leave null client ones in the messages vector)
-		//means they are only transmitted once
-		for (auto it = messages.begin(); it != messages.end(); ) {
-			if (it->toClient == client) {
-				it = messages.erase(it); // Erase and update iterator
-			}
-			else {
-				++it; // Move to the next element
-			}
-		}
-	}
-
-
-}
-*/
-
-
-/// <summary>
-/// queue a message for a specific client, or all
-/// </summary>
-/// <param name="s">standard string containing message</param>
-/// <param name="client">spcific client, or all if nullptr</param>
-void nsLOCONETprocessor::queueMessage(std::string s, AsyncClient* client) {
-
-	//2026-04-04 we don't know what type of client we have.  that's fine if we are processing a loconet message send-receive-sentok because this is going
-	//back to the same client that originated it.  but if we have an ESPACC message to process, we want to send this to all LN clients.  Actually we can do 
-	//that by handing the inbound traffic in WiThrottle
-
-
-	nsWiThrottle::queueMessage(s, client);
-	/*
-	CLIENTMESSAGE m;
-	m.toClient = client;
-	m.msg = s;
-	messages.push_back(m);
-	*/
-}
 
 /// <summary>
 /// Call from TCP-IP disconnect event.  Will stop all locos and clear-down the loconet slots

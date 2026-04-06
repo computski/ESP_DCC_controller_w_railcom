@@ -180,16 +180,9 @@ static void handleAccessoryData(void* arg, AsyncClient* client, void* data, size
 
 		//https://medium.com/@nerudaj/tuesday-coding-tip-53-replace-all-occurrences-of-substring-in-std-string-99a4181cbb24
 
-
 		std::string msg((const char*)data, len);
 		queueMessage(msg, "LN");
 		
-		/*
-		for (auto& c : clients) {
-			if (c.HU == "LN") 	queueMessage(msg, c.client);  //
-		
-		}
-		*/
 }
 
 
@@ -333,7 +326,7 @@ static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 			
 			//2021-02-05 WiThrottle can send alphanumeric characters.  This system does not support
 			//set-up with a name,  it needs an integer address.  We must validate this
-			uint16_t t = atoi(a);
+			uint16_t t = strtol(a,NULL,10);
 
 			if (t > 2047) t = 0;
 			if (t != 0) {
@@ -341,7 +334,7 @@ static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 
 				uint8_t i;
 				//find a match or assign a new turnout slot
-				i = findTurnout(atoi(a));
+				i = findTurnout(strtol(a, NULL, 10));
 
 				switch (p[3]) {
 				case 'T':
@@ -388,21 +381,14 @@ static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 	p = strstr(msg, "ESPACC");
 	if (p) {
 		for (auto& c : clients) {
-			if (c.client == client) {
-				c.HU = "ESPACC";
-				//re-assign handler to accessory handler
-				client->onData(&handleAccessoryData, NULL);
-				
-				//the ESPaccessoryController will send a plain ESPACC every 10 sec as a keepalive
-				//if it has a return payload it will instead send RECEIVE msg 
-				
-				return;
-			}
-
+			if (c.client != client) continue;
+			c.HU = "ESPACC";
+			//re-assign handler to accessory handler
+			client->onData(&handleAccessoryData, NULL);
+			//the ESPaccessoryController must send a plain ESPACC every 10 sec as a keepalive
+			return;
 		}
 	}
-
-
 
 
 	//2025-12-31 DEBUG over TCP support.  This creates a withrottle entry that can be activated by sending DEBUG over TCP to the server
@@ -410,10 +396,9 @@ static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 	p = strstr(msg, "DEBUG");
 	if (p) {
 		for (auto& c : clients) {
-			if (c.client == client) {
-				c.HU = "DEBUG";
-				return;
-			}
+			if (c.client != client) continue;
+			c.HU = "DEBUG";
+			return;
 		}
 	}
 
@@ -636,7 +621,7 @@ int8_t nsWiThrottle::addReleaseThrottle(AsyncClient* toClient, char MT, char *ad
 		/*Note: Engine Driver expects to pick up an existing loco from a roster, which predfines the speed steps
 		 *ED cannot send a message to set 28/128 steps.  it appears to work natively in 128 mode
 		 *So, if the loco was not defined in the local UI, we just have to leave the use128 setting as is on the slot*/
-		loco[myT.locoSlot].address = atoi(address + 1);
+		loco[myT.locoSlot].address = strtol(address + 1,NULL,10);
 		loco[myT.locoSlot].useLongAddress = address[0] == 'L' ? true : false;
 		/*flag a change, this will cause the existing values to transmit and get picked up by the MT*/
 		loco[myT.locoSlot].changeFlag = true;
@@ -785,7 +770,7 @@ int8_t nsWiThrottle::doThrottleCommand(void *data, AsyncClient *toClient) {
 			if (p[3] == 'V' && (msg[3] == '*' || (strcmp(address, throttle.address) == 0))) {
 				/*SPEED command, respond to * or match address exactly */
 
-				int8_t speedCode = atoi(p + 4);
+				int8_t speedCode = strtol(p + 4,NULL,10);
 
 				trace(Serial.printf("speed cmd %d\\r\n", speedCode);)
 
@@ -879,7 +864,7 @@ int8_t nsWiThrottle::doThrottleCommand(void *data, AsyncClient *toClient) {
 			if (p[3] == 'F') {
 				/*function command M0A*<;>F012 where first char after F 0|1 is state, of f12 in this example */
 				/*loco[].function is 16 bit mapped functions*/
-				uint8_t b = atoi(p + 5);
+				uint8_t b = strtol(p + 5,NULL,10);
 
 				trace(Serial.printf("func cmd %d\r\n", b);)
 
@@ -1003,11 +988,14 @@ void nsWiThrottle::broadcastPower(void) {
 /// </summary>
 /// <param name="s">message</param>
 /// <param name="client">spcific client, or all if nullptr</param>
-void nsWiThrottle::queueMessage(std::string s, AsyncClient *client) {
+/// <returns>true a messages was queued</returns>
+bool nsWiThrottle::queueMessage(std::string s, AsyncClient *client) {
+	if (s.empty()) return false;
 	CLIENTMESSAGE m;
 	m.toClient = client;
 	m.msg = s;
 	messages.push_back(m);
+	return true;
 }
 
 /// <summary>
@@ -1015,7 +1003,9 @@ void nsWiThrottle::queueMessage(std::string s, AsyncClient *client) {
 /// </summary>
 /// <param name="s">message</param>
 /// <param name="identifier">client id such as LN,ESPACC,DEBUG</param>
-void nsWiThrottle::queueMessage(std::string s, std::string identifier) {
+/// <returns>true if one or more messages are queued</returns>
+bool nsWiThrottle::queueMessage(std::string s, std::string identifier) {
+	bool oneOrMoreMessages = false;
 	for (auto c : clients) {
 		if (c.HU != identifier) continue;
 		if (c.client == nullptr) continue;
@@ -1023,8 +1013,9 @@ void nsWiThrottle::queueMessage(std::string s, std::string identifier) {
 		m.toClient = c.client;
 		m.msg = s;
 		messages.push_back(m);
-		Serial.printf("qM2 %s\n", s.c_str());
+		oneOrMoreMessages = true;
 	}
+	return oneOrMoreMessages;
 }
 
 
@@ -1072,7 +1063,7 @@ void nsWiThrottle::broadcastLocoRoster(AsyncClient *client) {
 	//2021-12-01 also added HTDCCESP as a server message to the client.  Steve Todd, the author of Engine Driver has
 	//kindly agreed to recognise this token in his app so that the Web menu item appears as DCC ESP Settings
 	char buff[30];
-	snprintf(buff, 29, "VN2.0\r\nPW80\r\n*%d\r\nHTDCCESP\r\n", WITHROTTLE_TIMEOUT);
+	snprintf(buff, 30, "VN2.0\r\nPW80\r\n*%d\r\nHTDCCESP\r\n", WITHROTTLE_TIMEOUT);
 
 	m.msg = buff;
 	
@@ -1174,34 +1165,67 @@ void nsWiThrottle::broadcastTurnoutRoster(AsyncClient *client) {
 
 }
 
-/*sub-processing routine for broadcastWiChanges*/
+/// <summary>
+/// pre-processes turnout changes into WiT strings and also LocoNet strings
+/// </summary>
+/// <param name="clearFlags">true will clear individual turnout changeFlag</param>
 void queueTurnouts(bool clearFlags) {
-	std::string s;
-	char buf[20];
+	constexpr uint8_t BUF_LEN = 20;   //constexpr preferred to #define
+	std::string msgWiThrottle;
+	std::string msgLocoNet;
+	uint8_t locoNetCommand[4];
+	
+	char buf[BUF_LEN];
 	for (auto& turn : turnout) {
 		if (!turn.changeFlag) { continue; }
-		memset(buf, '\0', sizeof(buf)); //pad with nulls
+		memset(buf, '\0', BUF_LEN); //pad with nulls
 		trace(Serial.printf("queue turnouts %d state%d\n", turn.address, turn.thrown);)
 		//send absolute state PTAxAddr
 		if (turn.thrown) {
-			sprintf(buf, "PTA4%d\r\n", turn.address);
+			snprintf(buf, BUF_LEN, "PTA4%d\r\n", turn.address);
 		}
 		else {
-			sprintf(buf, "PTA2%d\r\n", turn.address);
+			snprintf(buf, BUF_LEN, "PTA2%d\r\n", turn.address);
 		}
-		s.append(buf);
+		msgWiThrottle.append(buf);
+
+		//*** 2026-04-04 build a loconet command string. loconet addresses start at zero hence subtract 1
+		locoNetCommand[0] = OPC_SW_REQ;
+		locoNetCommand[1] = (turn.address-1) & 0x7F;  //7lsb of address
+		locoNetCommand[2] = ((turn.address-1) >> 7) & 0b1111; //<A10-7>
+		locoNetCommand[2] += turn.thrown ? 0b00010000 : 0b00110000; //close is dir=1, thrown is dir=0
+		locoNetCommand[3] = locoNetCommand[0] ^ locoNetCommand[1] ^ locoNetCommand[2] ^ 0xFF;
+		//msgLocoNet.append("SEND ");
+		memset(buf, '\0', BUF_LEN); //pad with nulls
+		snprintf(buf, BUF_LEN, "%02X %02X %02X %02X\n", locoNetCommand[0], locoNetCommand[1], locoNetCommand[2], locoNetCommand[3]);
+		msgLocoNet.append(buf);
+
 		if (clearFlags) { turn.changeFlag = false; }
 	}//turnout loop
 
 	 //send msg to ALL clients
-	queueMessage(s, nullptr);
+	if (msgWiThrottle.empty()) return;
+	queueMessage(msgWiThrottle, nullptr);
+
+	//send locoNet turnout message just ESPACC clients and LN clients
+	if (msgLocoNet.empty()) return;
+
+	if 	(queueMessage("SEND " + msgLocoNet, "ESPACC")) return;
+	//We CAN send turnout changes on the ESP-controller (which were non panel pro originated) back to Panel Pro as 
+	//RECEIVE B0 payload messages.  This will change the status displayed in Panel Pro.
+	
+	//2026-04-06 if we have no ESPACC clients, then the ESP-controller originated turnout event (e.g. push button) needs to send
+	//a message to Panel Pro
+	queueMessage("RECEIVE " + msgLocoNet, "LN");
+
 }
 
 /*builds a datagram per client from the loco and turnout changes and any queued messages. Call regularly from main loop.*/
 void nsWiThrottle::broadcastChanges(bool clearFlags) {
 	//sending to a specific client is blocking if you attempt to send more data before the first transmission
 	//has completed.  for this reason we need to group all messages per client and send as a jumbo message
-		
+	constexpr uint8_t BUF_LEN = 128;
+
 	//deal with turnout changes, put these in the message queue
 	queueTurnouts(clearFlags);
 	
@@ -1217,7 +1241,7 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 	}
 
 	std::string m;
-	char buf[128];  //2025-03-18 increase from 32 to 128 to handle the function names string
+	char buf[BUF_LEN];  //2025-03-18 increase from 32 to 128 to handle the function names string
 	char myT[4];  //target throttle 
 	
 	//loop for client; we build messages on a per-client basis
@@ -1248,7 +1272,7 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 					isConsistent = false;
 				}
 				else {
-					sprintf(buf, "S%d", loco[throttle.locoSlot].address);
+					snprintf(buf, BUF_LEN, "S%d", loco[throttle.locoSlot].address);
 					if (loco[throttle.locoSlot].useLongAddress) {
 						buf[0] = 'L';
 					}
@@ -1265,15 +1289,15 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 						break;
 					}
 					//Normal operation is send speed and direction
-					sprintf(buf, "M%sA%s<;>V%d\r\n", myT, throttle.address, uint8_t(126 * loco[throttle.locoSlot].speed));
+					snprintf(buf, BUF_LEN, "M%sA%s<;>V%d\r\n", myT, throttle.address, uint8_t(126 * loco[throttle.locoSlot].speed));
 					//test for estop - yet to implement
 					m.append(buf);
 
 					if (loco[throttle.locoSlot].forward) {
-						sprintf(buf, "M%sA%s<;>R1\r\n", myT, throttle.address);
+						snprintf(buf, BUF_LEN,"M%sA%s<;>R1\r\n", myT, throttle.address);
 					}
 					else {
-						sprintf(buf, "M%sA%s<;>R0\r\n", myT, throttle.address);
+						snprintf(buf, BUF_LEN, "M%sA%s<;>R0\r\n", myT, throttle.address);
 					}
 					m.append(buf);
 					break;
@@ -1286,29 +1310,29 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 						break;
 					}
 					//send add instruction MT+addr<;>addr, this works whether adding from the roster or adding a DCC address direct
-					sprintf(buf, "M%s+%s<;>%s\r\n", myT, throttle.address, throttle.address);
+					snprintf(buf, BUF_LEN, "M%s+%s<;>%s\r\n", myT, throttle.address, throttle.address);
 					m.append(buf);
 					//2025-03-18 append an array of function names.
 					//you need to escape \ in the string below as \\
 					//MTLaddr<;>]\[Headlight]\[Bell]\[Horn]\[
 					//we only support 16 functions, and can't store their names
 					//had to increase buf[] to 128
-					sprintf(buf, "M%sL%s<;>]\\[Headlight]\\[1]\\[2]\\[3]\\[4]\\[5]\\[6]\\[7]\\[8]\\[9]\\[10]\\[11]\\[12]\\[13]\\[14]\\[15]\\[\r\n", myT, throttle.address);
+					snprintf(buf, BUF_LEN, "M%sL%s<;>]\\[Headlight]\\[1]\\[2]\\[3]\\[4]\\[5]\\[6]\\[7]\\[8]\\[9]\\[10]\\[11]\\[12]\\[13]\\[14]\\[15]\\[\r\n", myT, throttle.address);
 					m.append(buf);
 					//it is not necessary to immediately send the function states using MTAaddr<;>F00		
 					//end 2025-03-17
 
 
 					//now send speed and dir
-					sprintf(buf, "M%sA%s<;>V%d\r\n", myT, throttle.address, uint8_t(126 * loco[throttle.locoSlot].speed));
+					snprintf(buf, BUF_LEN,"M%sA%s<;>V%d\r\n", myT, throttle.address, uint8_t(126 * loco[throttle.locoSlot].speed));
 					//test for estop - yet to implement
 					m.append(buf);
 
 					if (loco[throttle.locoSlot].forward) {
-						sprintf(buf, "M%sA%s<;>R1\r\n", myT, throttle.address);
+						snprintf(buf, BUF_LEN, "M%sA%s<;>R1\r\n", myT, throttle.address);
 					}
 					else {
-						sprintf(buf, "M%sA%s<;>R0\r\n", myT, throttle.address);
+						snprintf(buf, BUF_LEN, "M%sA%s<;>R0\r\n", myT, throttle.address);
 					}
 					m.append(buf);
 
@@ -1317,7 +1341,7 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 
 				case MT_STEAL:
 					//steal message is not based on the slot addr, rather the throttle addr MTSaddr<;>addr
-					sprintf(buf, "M%sS%s<;>%s\r\n", myT, throttle.address, throttle.address);
+					snprintf(buf, BUF_LEN, "M%sS%s<;>%s\r\n", myT, throttle.address, throttle.address);
 					m.append(buf);
 					//steal throttle placeholder has served its purpose, delete it 
 					throttle.locoSlot = -1;
@@ -1326,7 +1350,7 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 
 				case MT_RELEASE:
 					//MT-addr<;>addr
-					sprintf(buf, "M%s-%s<;>%s\r\n", myT, throttle.address, throttle.address);
+					snprintf(buf, BUF_LEN,"M%s-%s<;>%s\r\n", myT, throttle.address, throttle.address);
 					m.append(buf);
 					//tag the slot for garbage collection
 					throttle.locoSlot = -1;
@@ -1347,7 +1371,7 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 					for (int f = 0;f < 17;f++) {
 						//APPEND to msg
 						fState = ((loco[throttle.locoSlot].function & (1 << f)) == 0) ? 0 : 1;
-						sprintf(buf, "M%sA*<;>F%d%d\r\n", myT, fState, f);
+						snprintf(buf, BUF_LEN,"M%sA*<;>F%d%d\r\n", myT, fState, f);
 						m.append(buf);
 					}
 				}//function
@@ -1444,12 +1468,8 @@ void nsWiThrottle::processTimeout() {
 /// </summary>
 /// <param name="msg">loconet message as a series of bytes and no preamble words</param>
 void nsWiThrottle::relayLocoNetMessage(std::string s) {
-	
-	std::string m;
-	m.append("RELAY ");
-	m.append(s);
-	//find the ESPaccessory clients and pass the message to them
+	//note, this is relaying PP messages out to the ESPACC.  When the ESPACC reponds, we need to send that message back to PP
 	for (auto &c  : clients) {
-		if (c.HU == "ESPACC") queueMessage(m, c.client);
+		if (c.HU == "ESPACC") queueMessage(s, c.client);
 	}
 }

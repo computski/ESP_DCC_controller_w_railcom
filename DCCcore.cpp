@@ -1759,7 +1759,7 @@ void changeDigit(char digitASCII, uint8_t digPos, uint8_t* target) {
 	i = i - 1 - digPos;
 	/*change this digit and return new integer value*/
 	buffer[i] = digitASCII;
-	*target = atoi(buffer);
+	*target = strtol(buffer,NULL,10);
 }
 
 void changeDigit(char digitASCII, uint8_t digPos, uint16_t* target) {
@@ -1773,7 +1773,7 @@ void changeDigit(char digitASCII, uint8_t digPos, uint16_t* target) {
 	i = i - 1 - digPos;
 	/*change this digit and return new integer value*/
 	buffer[i] = digitASCII;
-	*target = atoi(buffer);
+	*target = strtol(buffer, NULL, 10);
 }
 
 
@@ -3514,7 +3514,7 @@ bool writePOMcommand(const char* address, uint16_t cv, const char* val) {
 	if (val == nullptr) return false;
 		
 	m_pom.useLongAddr = address[0] == 'L' ? true : false;
-	m_pom.address = atoi(address + 1);
+	m_pom.address = strtol(address + 1,NULL,10);
 	if (m_pom.address == 0) return false;
 
 
@@ -3524,12 +3524,12 @@ bool writePOMcommand(const char* address, uint16_t cv, const char* val) {
 
 	switch (val[0]) {
 	case 'B':
-		m_pom.cvData = atoi(val + 1);
+		m_pom.cvData = strtol(val + 1,NULL,10);
 		m_pom.state = POM_BYTE_WRITE;
 		break;
 
 	case 'R':  //2024-05-04
-		m_pom.cvData = atoi(val + 1);
+		m_pom.cvData = strtol(val + 1,NULL,10);
 		m_pom.state = POM_BYTE_READ;
 		break;
 
@@ -3675,12 +3675,12 @@ int8_t findLoco(char* address, char* existingAddress, bool searchOnly) {
 
 	//do not match a zero address
 	//Refactor: WiT did not check for zero address, but it never expected to receive one
-	if (atoi(buf) == 0) return -1;
+	if (strtol(buf,NULL,10) == 0) return -1;
 
 
 	//match exactly on address and short/long
 	for (i = 0; i < MAX_LOCO; i++) {
-		if ((loco[i].address == atoi(buf)) && (loco[i].useLongAddress == useLong)) {
+		if ((loco[i].address == strtol(buf, NULL, 10)) && (loco[i].useLongAddress == useLong)) {
 			if (existingAddress != NULL) {
 				sprintf(existingAddress, "S%d", loco[i].address);
 				if (loco[i].useLongAddress) existingAddress[0] = 'L';

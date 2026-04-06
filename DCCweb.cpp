@@ -228,7 +228,7 @@ void nsDCCweb::startWebServices() {
 		p = strtok((char*)ipBoot, ",.");
 		int i = 0;
 		while (p != NULL) {
-			myIP[i] = atoi(p);
+			myIP[i] = strtol(p,NULL,10);
 			i++;
 			if (i == 4) break;
 			//more data?
@@ -402,9 +402,9 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 
 			const char* v = doc["mA_limit"];
 			if (v != nullptr) {
-				if (atoi(v) > 0 && atoi(v) != bootController.currentLimit) {
+				if (strtol(v,NULL,10) > 0 && strtol(v,NULL,10) != bootController.currentLimit) {
 					bootController.isDirty = true;
-					bootController.currentLimit = atoi(v);
+					bootController.currentLimit = strtol(v,NULL,10);
 					if (bootController.currentLimit > 4000) bootController.currentLimit = 4000;
 					if (bootController.currentLimit < 250) bootController.currentLimit = 250;
 
@@ -413,9 +413,9 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 
 			v = doc["V_limit"];
 			if (v != nullptr) {
-				if (atoi(v) > 0 && atoi(v) != bootController.voltageLimit) {
+				if (strtol(v,NULL,10) > 0 && strtol(v,NULL,10) != bootController.voltageLimit) {
 					bootController.isDirty = true;
-					bootController.voltageLimit = atoi(v);
+					bootController.voltageLimit = strtol(v,NULL,10);
 				}
 			}
 
@@ -520,17 +520,17 @@ void nsDCCweb::DCCwebWS(JsonDocument doc) {
 
 			v = doc["wsPort"];
 			if (v != nullptr) {
-				if (atoi(v) > 0 && atoi(v) <= 65535) {
+				if (strtol(v,NULL,10) > 0 && strtol(v,NULL,10) <= 65535) {
 					restart = true;
-					bootController.wsPort = atoi(v);
+					bootController.wsPort = strtol(v,NULL,10);
 				}
 			}
 
 			v = doc["tcpPort"];
 			if (v != nullptr) {
-				if (atoi(v) > 0 && atoi(v) <= 65535) {
+				if (strtol(v, NULL, 10) > 0 && strtol(v, NULL, 10) <= 65535) {
 					restart = true;
-					bootController.tcpPort = atoi(v);
+					bootController.tcpPort = strtol(v, NULL, 10);
 				}
 			}
 
@@ -982,7 +982,7 @@ bool nsDCCweb::changeToSlot(uint8_t slot, uint16_t address, bool useLong, bool u
 /// <returns>true if one or more the params is different to that in the nominated slot</returns>
 bool nsDCCweb::changeToSlot(uint8_t slot, const char* address, bool useLong, bool use128, const char* name) {
 
-	if (atoi(address) != loco[slot].address) return true;
+	if (strtol(address,NULL,10) != loco[slot].address) return true;
 	if (loco[slot].useLongAddress != useLong)  return true;
 	if (loco[slot].use128 != use128)  return true;
 
@@ -1026,7 +1026,7 @@ bool nsDCCweb::changeToTurnout(uint8_t slot, uint16_t address, const char* name)
 /// <param name="name">friendly name</param>
 /// <returns>true if a params supplied indicate a change is necessary</returns>
 bool nsDCCweb::changeToTurnout(uint8_t slot, const char* address, const char* name) {
-	if (atoi(address) != turnout[slot].address) return true;
+	if (strtol(address,NULL,10) != turnout[slot].address) return true;
 	//both name might be null
 	if (((name == nullptr) && (turnout[slot].name == nullptr))) return true;
 	//or one of them...
