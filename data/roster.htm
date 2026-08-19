@@ -82,6 +82,8 @@
 
         //var wsUri = "https://echo.websocket.org/.ws";   //disable for production
         var wsUri = "192.168.7.1:12080/";
+	var ws;
+
         //https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/readyState
 
         //define send-receive objects
@@ -106,14 +108,10 @@
         //then we fall back to the default wsUri defined above.
 
         function boot() {
-            // if (attempts > 10) { return; }
+            if (attempts > 10) { return; }
             //var re = /echo/gm;
             //if (re.test(wsUri)) {
             attempts++;
-
-            //what is status?
-
-
             if (attempts > 1) {
                 //connect anyway to the default wsUri
                 initWebsocket();
@@ -169,67 +167,36 @@
 
 
         function initWebsocket() {
+        
+	//do not open another socket if one is already active
+	if (ws && ws.readyState === WebSocket.OPEN) return;
 
-            //can only test readyState once mysocket is instantiated
-            if (typeof mysocket != 'undefined') {
-                if (mysocket.readyState == 3) {
-                    //if socket has closed, re-open it
-                    //by falling into code block below
-                    if (console) console.log("re-init");
-                } else {
-                    //if open, opening, closing
-                    return;
-                }
-
-            };
-
-
-            mysocket = new WebSocket(wsUri);
+            ws = new WebSocket(wsUri);
             if (console) console.log("initWebsocket");
 
-            mysocket.onopen = function (evt) {
-                onOpen(evt)
-            };
+            ws.onopen = function (evt) {onOpen(evt)};
+            
+            ws.onclose = function (evt) { onClose(evt) };   
 
-            mysocket.onclose = function (evt) {
-                onClose(evt)
-            };
+            ws.onmessage = function (evt) {onMessage(evt)};
 
-            mysocket.onmessage = function (evt) {
-                onMessage(evt)
-
-
-            };
-
-            mysocket.onerror = function (evt) {
-                onError(evt)
-            };
-
-
-
+            ws.onerror = function (evt) {onError(evt)};
         }
 
         //can use open/close to set a green/red connection flag
         function onOpen(evt) {
-            if (console) {
-                console.log("websocket open");
-            }
+            if (console) {console.log("websocket open");}          
             //debug send for an echo
             pollRoster();
         }
 
         function onClose(evt) {
-            if (console) {
-                console.log("websocket close");
-            }
-
+            if (console) {console.log("websocket close");}
         }
 
         function onError(evt) {
-            if (console) {
-                console.log("websocket error");
-            }
-
+		ws.close();
+           	if (console) {console.log("websocket error");}
         }
 
 
@@ -249,7 +216,7 @@
         function pollRoster() {
             var myJSON = JSON.stringify(roster);
             debug.innerHTML = myJSON;
-            mysocket.send(myJSON);
+            ws.send(myJSON);
         }
 
 
@@ -370,7 +337,7 @@
             if (console) { (console.log("sendRoster")) };
             var myJSON = JSON.stringify(roster);
             debug.innerHTML = myJSON;
-            mysocket.send(myJSON);
+            ws.send(myJSON);
         }
 
 
@@ -386,7 +353,7 @@
             var myJSON = JSON.stringify(jog);
             debug.innerHTML = myJSON;
             if (console) console.log(myJSON);
-            mysocket.send(myJSON);
+            ws.send(myJSON);
 
         }
 

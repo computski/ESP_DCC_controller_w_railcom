@@ -62,9 +62,11 @@
     </style>
 
     <script type="text/javascript">
+//2026-08-18 bug fixes
+
         //var wsUri = "wss://echo.websocket.org/";
         var wsUri = "192.168.6.1:12080/";
-
+	var websocket;
 
         //define send-receive objects. 2021-12-06 initialise "track" as unknown
         var power = { "type": "dccUI", "cmd": "power", "mA_limit": "", "V_limit": "", "mA": 23, "V": 2.2, "trip": true, "track": "unknown"};
@@ -137,26 +139,19 @@
             //signal to boot timeout to stop
             attempts = 10;
 
+	//do not open another socket if one is already active
+	if (websocket && websocket.readyState === WebSocket.OPEN) return;
+
+
             websocket = new WebSocket(wsUri);
-            websocket.onopen = function (evt) {
-                onOpen(evt)
-            };
+            websocket.onopen = function (evt) {onOpen(evt)};
 
-            websocket.onclose = function (evt) {
-                onClose(evt)
-            };
+            websocket.onclose = function (evt) {onClose(evt)};
+             
+	    websocket.onmessage = function (evt) {onMessage(evt)};
 
-            websocket.onmessage = function (evt) {
-                onMessage(evt)
-
-            };
-
-            websocket.onerror = function (evt) {
-                onError(evt)
-            };
-
-
-
+            websocket.onerror = function (evt) {onError(evt)};
+                
         }
 
         //can use open/close to set a green/red connection flag
@@ -173,13 +168,11 @@
         }
 
         function onClose(evt) {
-            if (console) {
-                console.log("websocket close");
-            }
-
+            if (console) {console.log("websocket close");}
         }
 
         function onError(evt) {
+	websocket.close();
             if (console) {
                 console.log("websocket error");
             }

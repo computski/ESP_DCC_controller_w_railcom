@@ -73,7 +73,7 @@
 
         //var wsUri = "wss://echo.websocket.org/";
         var wsUri = "ws://192.168.6.1:12080/";
-
+	var ws;
 
         //define send-receive objects
         var hardware = { "type": "dccUI", "cmd": "hardware", "SSID": "DCC_02", "IP": "192.168.7.1", "MAC":"return of the", "pwd": "", "wsPort": 12080, "wiPort": 12090, "action": "poll" };
@@ -149,25 +149,28 @@
 
 
         function initWebsocket() {
+	//do not open another socket if one is already active
+	if (ws && ws.readyState === WebSocket.OPEN) return;
+
             if (console) { console.log("initWebsocket") };
             //signal to boot timeout to stop
             attempts = 10;
 
-            websocket = new WebSocket(wsUri);
-            websocket.onopen = function (evt) {
+            ws = new WebSocket(wsUri);
+            ws.onopen = function (evt) {
                 onOpen(evt)
             };
 
-            websocket.onclose = function (evt) {
+            ws.onclose = function (evt) {
                 onClose(evt)
             };
 
-            websocket.onmessage = function (evt) {
+            ws.onmessage = function (evt) {
                 onMessage(evt)
 
             };
 
-            websocket.onerror = function (evt) {
+            ws.onerror = function (evt) {
                 onError(evt)
             };
 
@@ -215,7 +218,7 @@
         function pollRoster() {
             var myJSON = JSON.stringify(roster);
             debug.innerHTML = myJSON;
-            websocket.send(myJSON);
+            ws.send(myJSON);
         }
 
    
@@ -308,7 +311,7 @@
             if (console) { (console.log("sendRoster")) };
             var myJSON = JSON.stringify(roster);
             debug.innerHTML = myJSON;
-            websocket.send(myJSON);
+            ws.send(myJSON);
         }
 
 	function doChange(t){
