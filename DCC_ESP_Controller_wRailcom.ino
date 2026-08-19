@@ -57,7 +57,9 @@
 uint8_t secCount;
 
 void setup() {
-	Serial.begin(115200);
+	//Note: set the CPU clock freq to 160 in the IDE rather than using this dynamic update line
+	//system_update_cpu_freq(160);
+	
 	Serial.println(F("\n\nBoot DCC ESP"));
 	trace(
 		Serial.println(F("trace enabled"));

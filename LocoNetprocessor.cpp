@@ -11,28 +11,28 @@
 
 The base protocol for loconet is found in the loconet personal edition https://www.digitrax.com/support/loconet/loconetpersonaledition.pdf
 JRMI Decoder Pro (DP) and Panel Pro (PP) uses loconet over TCP which has additional message prefixes https://loconetovertcp.sourceforge.net/Protocol/LoconetOverTcp.html
-You first echo the command then transmit SENT OK and then transmit your response. https://loconetovertcp.sourceforge.net/Protocol/SD_blocking_request.svg
+We first echo the command then transmit SENT OK and then transmit our response. https://loconetovertcp.sourceforge.net/Protocol/SD_blocking_request.svg
 Useful glossary from digitrax https://www.digitrax.com/tsd/glossary/c/
 
 LocoNet protocol uses a series of system memory 'slots'.  These are not loco addresses.  Slot 124 is a special slot to control programming.
 A slot is set up to hold a loco and then commands are sent to that slot and the controller will repeately transmit the slot content to the track.
 This is exactly how the DCC ESP controller works, it holds a loco[] array of 8 loco slots and repeatedly transmits these to the track.
 
-IMPORTANT: this ESP project was originally designed as a stand-alone DCC controller and implements a WiThrottle server.  If you link this controller to DP over LocoNetoverTCP then
-the laptop DP application needs to run the WiThrottle server and this in turn will issue slot commands over loconet to the ESP controller which will transmit to the track.
+IMPORTANT: this ESP project was originally designed as a stand-alone DCC controller and implements a WiThrottle server.  If you link this controller to Decoder Pro over LocoNetoverTCP then
+the laptop Decoder Pro application needs to run the WiThrottle server and this in turn will issue slot commands over loconet to the DCC_ESP controller which will transmit to the track as DCC.
 i.e. Engine Driver now connects to the laptop IP address and not to the ESP controller.
 
-This module uses the existing ESP WiThrottle port to monitor for incoming LocoNet messages.  It recognises the incoming messages as LocoNet and changes the handler that
+This module uses the existing DCC_ESP WiThrottle port to monitor for incoming LocoNet messages.  It recognises the incoming messages as LocoNet and changes the handler that
 receives them to direct the messages to the LocoNetprocesssor.  This routine also makes calls to DCC core for programmer support, and asynchronous callbacks are made from DCC core
 to this module to handle incoming ACK pulses/ Service Mode read/writes as well as those for Program on Main.
 
-IMPORTANT: This ESP controller can support reading on the main using Railcom.  However, DP does not support reading on the main in terms of Read Full Sheet.  It is possible to bring up the 
-DP programming CVs sheet when in Program on  Main mode, and click Read to read CVs individually.  Its a limitation of DP that even on this tab, it still does not support Read Full Sheet.
+IMPORTANT: This DCC_ESP controller can support reading on the main using Railcom.  However, Decoder Pro does not support reading on the main in terms of Read Full Sheet.  It is possible to bring up the 
+Decoder Pro programming CVs sheet when in Program on  Main mode, and click Read to read CVs individually.  Its a limitation of DP that even on this tab, it still does not support Read Full Sheet.
 
 LocoNet locos are in slots 1-127, so we need to offset by one to make use of the loco[] array.  Slot 0 is used for dispatch which we don't need.
 to release a loco, locoNet writes 0x13 to STATUS1. 0b0001 0011. loco not consisted and common.
 
-Using locoNet will overwrite the roster that is stored in the ESP-DCC.  The roster itself is managed in DP, no longer stored on the ESP.  The ESP will restore its locally
+Using locoNet will overwrite the roster that is stored in the ESP_DCC.  The roster itself is managed in Decoder Pro, no longer stored on the ESP.  The ESP will restore its locally
 stored roster on re-boot.
 
 Note: LocoNet asks for control of a loco address. If the Master responds that the loco is in use, then the client is supposed not to ask to use it!  JRMI seems to
@@ -42,14 +42,14 @@ If you use ED to request 464 a second time then no loconet traffic is generated.
 This system does not support DCC-EX because I consider it an inferior protocol to LocoNet.
 
 Calls to write/read the programming track (service mode) and to write/read POM result in an async callback to callbackLocoNet() this in turn generates a locoNet message to confirm the operation 
-was a success or not.  Note that DP does not define how to enter/exit Service Mode (prog track).  This code will enter SM if an SM command is received.  It will only exit SM if
+was a success or not.  Note that Decoder Pro (DP) does not define how to enter/exit Service Mode (prog track).  This code will enter SM if an SM command is received.  It will only exit SM if
 the track power is cycled, but this could be dangerous because say you have a mis wired decoder, you initialise SM then put the loco on the track.  it causes a trip and then you 
 exit SM.  This would put full power on the miswired decoder....well ok, but then how are we to exit SM?   Ditto track is not in SM mode until you send the first SM command, so a miswired
 decoder could detonate.  Perhaps the DP designers' assumption was the controller has a permanent SM output.
 
-Note: DP does not support POM-read via Railcom for entire pages of CVs, but it does support individual CV reads on POM under the CVs tab.
-
 Note: JRMI Decoder Pro (DP) does not seem to recognise it has lost the TCP connection and does not attempt a re-initialise of LocoNet.  You have to manually restart DP.
+
+Note: DP does not support POM-read via Railcom for entire pages of CVs, but it does support individual CV reads on POM under the CVs tab.
 
 Known bug: trailing spaces in the token string will cause an incorrect token count and failure to action the message
 e.g. SEND B2 00 40 0D <LF> space before the linefeed, means a 5 token message
@@ -87,18 +87,18 @@ This will lead to runaway locos, because they continue to operate per the last c
 
 DP also does not re-establish communications if this has dropped out.  You are forced to exit DP and then restart the app.
 
-TO DO: My software will hit emergency stop on all locos if the TCP link drops, but as mentioned this event may not happen, particularly if the laptop running JMRI goes to sleep.
+TO DO: Software to hit emergency stop on all locos if the TCP link drops, but as mentioned this event may not happen, particularly if the laptop running JMRI goes to sleep.
 The only reliable fix to this issue is for the JMRI developers to add a heartbeat message into locoNet.
 
 **** UNCHARACTERISED behaviours ****
 Do not run the DCC_ESP WiThrottle server at the same time as linking the DCC_ESP to JRMI and running a WiThrottle server on JRMI.
-Panel Pro can be used simultaneously with the turnout controls on the DCC_ESP when running as a WiThrottle server for EngineDriver, however PP will not mirror changes made
+Panel Pro can be used simultaneously with the turnout controls on the DCC_ESP when running as a WiThrottle server for EngineDriver, however Panel Pro will not mirror changes made
 to the turnout positions by the DCC_ESP if it is used in this fashion.
 If the JRMI laptop goes to sleep, the system may lose control of the locos as commanded by JRMI
 
 
 
-2026-04-04. Support for LocoNet ESPAccessoryController (ESPA)
+2026-04-04. Support for LocoNet ESPAccessoryController (ACCESP)
 the ESPA will connect to the DCC_ESP controller via TCP.  The DCC_ESP controller will relay the relevant loconet commands verbatim to all ESPA(s),
 and anything received will be relayed verbatim to all the loconet LN clients
 The following are relayed
@@ -110,11 +110,9 @@ OPC_SW_REQ: command a turnout
 The AccessoryController also asyncrhonously sends OPC_INPUT_REP sensor state changes to this ESP_controller, since these are passed transparently, the
 ESPA needs to prefix the messages RECEIVE
 
-2026-04-04 when the ESP controller switches a turnout in its own roster, we want to transmit this to all ESPACC devices.
+2026-04-04 when the ESP controller switches a turnout in its own roster, we want to transmit this to all ACCESP devices.
 This happens fromKey and alsoFromWiT but both will set a turnout[].changeFlag
-we leverage nsWiThrottle::queueTurnouts() to prepare a locoNet message to send to LN and ESPACC clients
-
-2026-04-04 note, whilst it is possible for the ESPACC to send a RECIEVE turnout message, in practice it will do so only in response to a  
+we leverage nsWiThrottle::queueTurnouts() to prepare a locoNet message to send to LN and ACCESP clients
 */
 
 using namespace nsLOCONETprocessor;
@@ -230,8 +228,8 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 	if (tokens.size() == 2) {
 		switch (tokens[0]) {
 		case OPC_IDLE:
-			//	FORCE IDLE state, B'cast emerg. STOP
-			
+			//	FORCE IDLE state, Broadcast emergency STOP
+			//  not implemented
 			break;
 			
 		case OPC_GPON:
@@ -380,27 +378,9 @@ this <B1> opcode encodes current OUTPUT levels
 */
 
 			//all we do is relay this message on to the ESP Accessory controller
-			nsWiThrottle::relayLocoNetMessage(msgCopy);
-		
-		{//scope block
-			//2026-03-30 new
+			//2026-08-19 loconet messages are now broadcast to all LN clients
 			//nsWiThrottle::relayLocoNetMessage(msgCopy);
-
-
-			//Digitrax DS54 address logic. SN1,2 hold A10-A0, left shift these and append SN2<5> as lsb A0, giving 12 bits
-			//this logic needs to go into the ESPACC
-
-			/*2026-03-30 deprecated
-			uint16_t addr = ((tokens[2] & 0b1111)<< 7) + tokens[1];
-			addr = addr << 1;
-			addr += (tokens[2] & 0b100000) == 0 ? 0 : 1;
-			addr++;  //DCC addresses start at 1, range 1-4096
-			trace(Serial.printf("sensor a=%d\n", addr);)
-
-				nsDCCweb::broadcastLocoNetCommand("sensor", addr, "unknown");
-		*/
-		}
-
+		
 		break;
 
 
@@ -419,7 +399,8 @@ this <B1> opcode encodes current OUTPUT levels
 			
 
 			//2026-03-30 new
-			nsWiThrottle::relayLocoNetMessage(msgCopy);  
+			//2026-08-19 loconet messages are now broadcast to all LN clients
+			//nsWiThrottle::relayLocoNetMessage(msgCopy);  
 
 			uint16_t addr = tokens[1];
 			addr += (tokens[2] & 0x0F) << 8;
@@ -431,23 +412,6 @@ this <B1> opcode encodes current OUTPUT levels
 
 			actionAccessoryFromLocoNet(addr, (tokens[2] & 0b00100000) == 0 ? true : false, (tokens[2] & 0b00010000) == 0 ? false : true);
 
-			//DEBUG send a sensor message  NONE of these work.
-			//queueMessage("RECEIVE B2 00 40 OD", client);  //attempt #1
-			//queueMessage("RECEIVE 0xB2 0x00 0x40 0xOD", client);  //attempt #2
-			//queueMessage("SEND B2 00 40 OD", client);  //attempt #3
-			//queueMessage("SEND 0xB2 0x00 0x40 0xOD", client);  //attempt #4
-
-
-
-
-			/*2026-03-30 deprecated
-			if ((tokens[2] & 0b00100000) == 0) {
-				nsDCCweb::broadcastLocoNetCommand("turnout", addr+1, "thrown");
-			}
-			else {
-				nsDCCweb::broadcastLocoNetCommand("turnout", addr+1, "closed");
-			}
-			*/
 		}
 		return;
 	}//end 4 token block
@@ -490,25 +454,8 @@ this <B1> opcode encodes current OUTPUT levels
 		//byte 1 is A<7-2> byte 2 BBB=A<10-8> 1s compliment, AA=A<1-0>  and byte 3 is a full 8-bit payload
 
 		//2026-03-30 new
-		nsWiThrottle::relayLocoNetMessage(msgCopy);
-
-
-/*2026-03-30 deprecated
-		//addr is wrong!  33 dcc (offset checked) generates 36 in addr var
-		//ED 0B 7F 32 01   09 71 15 00 00 38   should give 33 true dcc.
-		//we do need to decode it to send as a JSON message to the ESPaccessory controller
-		uint16_t addr = payload[1]>>4;  //BBB part
-		addr ^= 0b111; //1's compliment
-		addr = addr << 6; //move to <10-8> posn
-		addr += (payload[0] & 0b111111); //add <7-2>
-		addr = addr << 2;
-		addr += ((payload[1] & 0b110) >> 1);  //add <1-0>
-		//%.0f is decimal no dp, %02X is hex
-		snprintf(buf, 5, "%02X", payload[2]);  
-		//nsDCCweb::broadcastLocoNetCommand("MAS", addr, buf);
-		trace(Serial.printf("MAS %d %s\n", addr, buf);)
-		//Serial.println("booya");
-		*/
+		//2026-08-19 loconet messages are now broadcast to all LN clients
+		//nsWiThrottle::relayLocoNetMessage(msgCopy);
 
 		//final respone is LACK=<B4>,<7D>,<7F>,<chk> if CMD ok
 		nsWiThrottle::queueMessage("RECEIVE 0xB4 0x7D 0x7F 0x49\n", client);
@@ -560,7 +507,7 @@ this <B1> opcode encodes current OUTPUT levels
 			Any Slot RD from the master will also contain the Programmer Busy status in bit 3 of the <TRK> byte.
 			
 			
-			2026-01-22 Thailand.  LACK 2nd token should be the original opco code with <7>=0 i.e. it should be
+			2026-01-22  LACK 2nd token should be the original opco code with <7>=0 i.e. it should be
 			<B4> <6F> not <7F> because the original opcode was <EF>.  I think 7F is a typo in the spec document.
 			I did try this before and it didn't make DP behave any differently.
 			
@@ -607,12 +554,8 @@ this <B1> opcode encodes current OUTPUT levels
 				//if controller is still in service mode then reject the request.  DP will timeout with a 306 error.
 				if (power.serviceMode) {
 					nsWiThrottle::queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
-					//queueMessage("RECEIVE 0xB4 0x6F 0x7F 0x5B\n", client);  //found on the internet
-					return;
+				return;
 				}
-
-
-
 
 				//loconet cvs are zero based
 				if ((slot124Message.PCMD & 0b1000) == 0) {
@@ -627,7 +570,7 @@ this <B1> opcode encodes current OUTPUT levels
 					slot124Message.PSTAT = 0x00; //no write ack from decoder 0b10, because you didn't ask for one!
 					writeProgrammerTaskFinalReply();
 				
-					//There is a bug in DP. It issues a Byte Write, no feedback command but does not accept a LACK no E7 in response.
+					//There is a bug in Decoder Pro. It issues a Byte Write no feedback command but does not accept a LACK no E7 in response.
 					//Instead it expects an E7 response and bitches if this carries no ACK, even though this is what it asked for.
 					//So we can either fake an ACK or actually test for one.
 
@@ -638,8 +581,7 @@ this <B1> opcode encodes current OUTPUT levels
 					//operation not supported
 					nsWiThrottle::queueMessage("RECEIVE 0xB4 0x7F 0x7F 0x4B\n", client);
 				}
-
-			
+		
 				/*final response <0xE7>,<0E>,<7C>,<PCMD>,<PSTAT>,<HOPSA>,<LOPSA>,<TRK>;<CVH>,<CVL>,<DATA7>,<0>,<0>,<CHK>*/
 				return;
 			}
@@ -712,16 +654,13 @@ void nsLOCONETprocessor::writeProgrammerTaskFinalReply(void) {
 	//cBAK 0 	RECEIVE E7 0E 7C 2B 00 00 00 05=trk 00=cvH 01=cvL     00=data7    00 00 45
 	//comes up as 1, not zero
 
-	//there's a bug in the DP CV screen.
+	//there's a bug in the Decoder Pro CV screen.
 	// [E7 0E 7C 2B 00 00 00 05 00 01 00 00 00 45]  Programming Response: Read Byte in Direct Mode on Service Track Was Successful: CV2 value 0 (0x00, 00000000b).
 	//i.e. it read as zero, DP decoded it as zero and yet it writes a 1 to the CV window.  IF you run a compare operation, it correctly can verify zero.
 	//the bug is inconsistent because sometimes it can correctly read zero values.
 
 
 }
-
-
-
 
 
 

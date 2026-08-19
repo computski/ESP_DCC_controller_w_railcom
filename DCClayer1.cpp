@@ -557,6 +557,7 @@ void railcomInit() {
 	Serial.begin(250000);
 #else
 	Serial.println(F("Railcom disabled by trace"));
+	Serial.begin(115200);
 #endif // !TRACE
 
 	_rcstate = RC_EXPECT_ID0;

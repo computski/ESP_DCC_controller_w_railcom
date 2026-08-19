@@ -68,18 +68,21 @@ when user selected a loco from the server roster.
 
 */
 
-
+/*2026-08
+Added support for Loconet over TCP protocol.  The same TCP port is used for WiThrottles and Loconet devices.
+The software can differentiate bewteen the two types and this allows us to send the correct message flows to each.
+*/
 
 
 #include "Global.h"
 #include "WiThrottle.h"
 #include "DCCcore.h"
+#include "LocoNetprocessor.h"
 #include <ESP8266WiFi.h>
 #include <ESPAsyncTCP.h>
 #include <vector>
-//#include <SocketIOclient.h>  //may not actually be required. libary ver 2.6.1
+//#include <SocketIOclient.h>  //not actually required. libary ver 2.6.1
 
-#include "LocoNetprocessor.h"
 
 using namespace nsWiThrottle;
 
@@ -169,7 +172,14 @@ static void handleError(void* arg, AsyncClient* client, int8_t error) {
 //Passes inbound data from ESPaccessoryController to all LocoNet clients
 //passed verbatim and ultimately back to JRMI
 static void handleAccessoryData(void* arg, AsyncClient* client, void* data, size_t len) {
-	trace(Serial.printf("\nfrom AC %s \n", client->remoteIP().toString().c_str());)
+	trace(Serial.printf("\nfrom ACCESP %s \n", client->remoteIP().toString().c_str());)
+		//for ACCESP devices connecting directly to this DCC_ESP device, these will behave in the same way
+		//they behave when connected to the laptop JMRI server.
+		//i.e. they normally see incoming RECEIVE messages for signals/turnouts and act on these
+		//if they see a RECEIVE message for a sensor, they will respond with a SEND message
+		//if their sensor detects an event, they report this as a SEND message.
+
+
 
 		//messages will be prepended with RECEIVE
 		//e.g.RECEIVE B2 00 50 1D is a sensor event, either polled-for or asynchronous
@@ -195,7 +205,7 @@ static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 	//2021-09-09 if you have say MAX_LOCO=8 the buffer may not be big enough to capture all incoming data from loco.htm
 	//2025-09-27 if the client is DCCEX, this is recognised via <*> in the data and from that point a different handler is assigned	
 	//2025-10-22 if client is LOCONET, this is recognised via SEND in the data and from that point a different handler is assigned
-	//2026-03-30 if the client is ESPaccessory, this is recognised via ESPACC in the data and from that point a different handler is assigned
+	//2026-03-30 if the client is ACCESPessory, this is recognised via ACCESP in the data and from that point a different handler is assigned
 
 	for (auto &c : clients) {
 			if (c.client == client) {
@@ -377,15 +387,15 @@ static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 		}
 	}
 
-	//2026-03-30 LOCONET ACCESSORY support, any message where ESPACC is seen is for this accessory device
-	p = strstr(msg, "ESPACC");
+	//2026-03-30 LOCONET ACCESSORY support, any message where ACCESP is seen is for this accessory device
+	p = strstr(msg, "ACCESP");
 	if (p) {
 		for (auto& c : clients) {
 			if (c.client != client) continue;
-			c.HU = "ESPACC";
+			c.HU = "ACCESP";
 			//re-assign handler to accessory handler
 			client->onData(&handleAccessoryData, NULL);
-			//the ESPaccessoryController must send a plain ESPACC every 10 sec as a keepalive
+			//the ESPaccessoryController must send a plain ACCESP every 10 sec as a keepalive
 			return;
 		}
 	}
@@ -410,7 +420,7 @@ static void handleData(void* arg, AsyncClient* client, void *data, size_t len) {
 		for (auto& c : clients) {
 			if (c.client == client) {
 				c.HU = "EX";
-				//2025-12-18 DCCex not supported
+				//2025-12-18 DCCex not supported.  If it were, we would assign the new handler here.
 				return;
 			}
 		}
@@ -435,7 +445,7 @@ static void handleDisconnect(void* arg, AsyncClient* client) {
 			//was a loconet client disconnecting.  Stop all locos and clear slots down.
 				nsLOCONETprocessor::cleanExit();
 			}
-			Serial.printf("\n Disco client was %s\n", c.HU.c_str());
+			Serial.printf("\nDisco client was %s\n", c.HU.c_str());
 		}
 	}
 
@@ -950,7 +960,6 @@ bool nsWiThrottle::checkDoSteal(char *address, bool checkOnly, bool &isConsist) 
 	return (c_max == 0) ? false : true;
 }
 
-
 void nsWiThrottle::setPower(bool powerOn) {
 	if (powerOn) {
 		/*turn on track power*/
@@ -975,10 +984,10 @@ void nsWiThrottle::setPower(bool powerOn) {
 
 void nsWiThrottle::broadcastPower(void) {
 	if (power.trackPower) {
-		queueMessage("PPA1\r\n", nullptr);
+		queueMessage("PPA1\r\n", true);
 	}
 	else {
-		queueMessage("PPA0\r\n", nullptr);
+		queueMessage("PPA0\r\n", true);
 	}
 }
 
@@ -999,28 +1008,20 @@ bool nsWiThrottle::queueMessage(std::string s, AsyncClient *client) {
 }
 
 /// <summary>
-/// queue a message for a specific client identifier, or multiple clients if they have the same identifier
+/// Queue message with ALL clients of a specific type
 /// </summary>
 /// <param name="s">message</param>
-/// <param name="identifier">client id such as LN,ESPACC,DEBUG</param>
-/// <returns>true if one or more messages are queued</returns>
-bool nsWiThrottle::queueMessage(std::string s, std::string identifier) {
-	bool oneOrMoreMessages = false;
-	for (auto c : clients) {
-		if (c.HU != identifier) continue;
-		if (c.client == nullptr) continue;
-		CLIENTMESSAGE m;
-		m.toClient = c.client;
-		m.msg = s;
-		messages.push_back(m);
-		oneOrMoreMessages = true;
-	}
-	return oneOrMoreMessages;
+/// <param name="forWiThrottle">true if target is WiThrottle</param>
+/// <returns>true if a message was queued</returns>
+bool nsWiThrottle::queueMessage(std::string s, bool forWiThrottle) {
+	//2026-08-17
+	CLIENTMESSAGE m;
+	m.isWiThrottleMessage = forWiThrottle;
+	m.toClient = nullptr;
+	m.msg = s;
+	messages.push_back(m);
+	return true;
 }
-
-
-
-
 
 
 /*a consist ID is assigned to indicate a loco slot is tied to a WiThrottle.  It is also used to manage ad-hoc consists on a throttle*/
@@ -1051,10 +1052,10 @@ void nsWiThrottle::setConsistID(THROTTLE *t) {
    
 }
 
-
-/*send out the current loco roster to all clients, also sends throttle-boot preamble and power status*/
+/*send out the current loco roster to all WiT clients, also sends throttle-boot preamble and power status*/
 void nsWiThrottle::broadcastLocoRoster(AsyncClient *client) {
 	CLIENTMESSAGE m;
+	m.isWiThrottleMessage = true;
 	m.toClient = client;   //if nullptr will send to all clients
 	
 	//JRMI Version 2.0, and set WITHROTTLE_TIMEOUT which is defined in the header file
@@ -1123,10 +1124,11 @@ void nsWiThrottle::broadcastLocoRoster(AsyncClient *client) {
 
 }
 
-/*send current turnout roster to all clients*/
+/*send current turnout roster to all WiThrottle clients*/
 void nsWiThrottle::broadcastTurnoutRoster(AsyncClient *client) {
 	CLIENTMESSAGE m;
 	m.toClient = client;  //if nullptr send to all clients
+	m.isWiThrottleMessage = true;
 	char buffer[8];
 
 	//first string defines the states and their numeric equivalents
@@ -1162,14 +1164,14 @@ void nsWiThrottle::broadcastTurnoutRoster(AsyncClient *client) {
 	}
 	m.msg.append("\r\n");
 	messages.push_back(m);
-
 }
 
 /// <summary>
-/// pre-processes turnout changes into WiT strings and also LocoNet strings
+/// pre-processes turnout changes into WiThrottle and LOCONET messages
 /// </summary>
 /// <param name="clearFlags">true will clear individual turnout changeFlag</param>
 void queueTurnouts(bool clearFlags) {
+	//2026-08-17 modified
 	constexpr uint8_t BUF_LEN = 20;   //constexpr preferred to #define
 	std::string msgWiThrottle;
 	std::string msgLocoNet;
@@ -1203,20 +1205,59 @@ void queueTurnouts(bool clearFlags) {
 		if (clearFlags) { turn.changeFlag = false; }
 	}//turnout loop
 
-	 //send msg to ALL clients
+	 //send msg to ALL WiT clients
 	if (msgWiThrottle.empty()) return;
-	queueMessage(msgWiThrottle, nullptr);
+	//queueMessage(msgWiThrottle, nullptr);   //2026-08-15 but this will go to all clients incl ACCESP, right?
 
-	//send locoNet turnout message just ESPACC clients and LN clients
+	//queueMessage(msgWiThrottle, "WIT");   //2026-08-15 but this will go to all clients incl ACCESP, right?
+	//if this works, i need to similarly deal with all other nullptr calls
+
+	queueMessage(msgWiThrottle, true); //2026-08-17 all WiT clients
+
+	//and i think that we might cause a blocking action on the LN client, as we send it a wiT message which then
+	//might cause a busy at the point we want to send the LN message to it. Can we just send this message to WiT clients?
+
+	/*Side note:  We treat an LN client differently to an ACCESP client but why?
+	* LN client will use SEND and expect RECEIVE and SENT OK in return.
+	* ACCESP client expects to see RECEIVE as the message.  yes so it is different
+	* BUT c.HU is a unique ID for each WiThrottle, whereas ACCESP|LN|DEBUG are all text names for mutliple clients
+	* if we want to broadcast only to the WiT types, we need to NOT find the names above in C.HU
+	*/
+
+
+
+
+	//send locoNet turnout message just ACCESP clients and LN clients
 	if (msgLocoNet.empty()) return;
 
-	if 	(queueMessage("SEND " + msgLocoNet, "ESPACC")) return;
+	//bug in this next bit, because qMess will return true if it qued a debug message
+	//the logic here was we either are talking to a JMRI laptop, or there is none in the system and we are only
+	//talking to a ACCESP acting as a slave.  But my new logic is that we are talking to a LN and optionally ACCESPs 
+	//directly on DCC_ESP rather than via JMRI therefore logic below has to change anyways. but as a quick fix
+	//we won't test-and-return
+
+
+	//if 	(queueMessage("SEND " + msgLocoNet, "ACCESP")) return;
+	//queueMessage("SEND " + msgLocoNet, "ACCESP");
+	//queueMessage("SEND " + msgLocoNet, false);  //2026-08-17  not needed
+
+
+	//2026-08-15 i am thinking we treat ACCESP same as LN in this case which is to send it RECEIVE messages, as that is 
+	//how ACCESP operates when talking to the JRMI server.  In fact we would only ever use SEND for an async sensor message
+	//but these cannot be generated on DCC_ESP because it has no sensors.
+	//and in fact ACCESP in the latest version can only connect to either JMRI or to DCC_ESP as a client.  If it its
+	//running as a LN server then you must connect to it.
+	//..so as far as DCC_ESP is concerned, LN on JRMI looks like an ACCESP client anyway but i guess we don't send it
+	//SENT OK messages, so there's the difference.
+
+	
 	//We CAN send turnout changes on the ESP-controller (which were non panel pro originated) back to Panel Pro as 
 	//RECEIVE B0 payload messages.  This will change the status displayed in Panel Pro.
 	
-	//2026-04-06 if we have no ESPACC clients, then the ESP-controller originated turnout event (e.g. push button) needs to send
+	//2026-04-06 if we have no ACCESP clients, then the ESP-controller originated turnout event (e.g. push button) needs to send
 	//a message to Panel Pro
-	queueMessage("RECEIVE " + msgLocoNet, "LN");
+	
+	queueMessage("RECEIVE " + msgLocoNet, false);  //2026-08-17 this goes to LN and ACCESP clients.
 
 }
 
@@ -1240,14 +1281,15 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 		if (clearFlags) bootController.flagLocoRoster = false;
 	}
 
-	std::string m;
+	std::string jumboMsg;
 	char buf[BUF_LEN];  //2025-03-18 increase from 32 to 128 to handle the function names string
 	char myT[4];  //target throttle 
 	
 	//loop for client; we build messages on a per-client basis
 	for (auto c : clients) {
 		//clear msg
-		m.clear();
+		jumboMsg.clear();
+		
 		
 		//loop through all throttles per specific client, then for each loco found thereunder, add it to
 		//the block message
@@ -1258,10 +1300,9 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 			//2021-02-01 .MT is a single char, can be alpha numeric, was captured as an ascii code originally
 			myT[0] = throttle.MT;
 
-		//2026-04-04 LocoNet, ESPACC and DCCEX clients will not have throttles associated with them
+		//2026-04-04 LOCONET, ACCESP and DEBUG clients will not have throttles associated with them
 		if (c.client != throttle.toClient) continue;
 
-			//if (c.client == throttle.toClient) {
 				//client matches.  we need to transmit all MTs on this client if they have changes
 				bool isConsistent = false;
 
@@ -1291,7 +1332,7 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 					//Normal operation is send speed and direction
 					snprintf(buf, BUF_LEN, "M%sA%s<;>V%d\r\n", myT, throttle.address, uint8_t(126 * loco[throttle.locoSlot].speed));
 					//test for estop - yet to implement
-					m.append(buf);
+					jumboMsg.append(buf);
 
 					if (loco[throttle.locoSlot].forward) {
 						snprintf(buf, BUF_LEN,"M%sA%s<;>R1\r\n", myT, throttle.address);
@@ -1299,7 +1340,7 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 					else {
 						snprintf(buf, BUF_LEN, "M%sA%s<;>R0\r\n", myT, throttle.address);
 					}
-					m.append(buf);
+					jumboMsg.append(buf);
 					break;
 
 				case MT_NEWADD:
@@ -1311,14 +1352,14 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 					}
 					//send add instruction MT+addr<;>addr, this works whether adding from the roster or adding a DCC address direct
 					snprintf(buf, BUF_LEN, "M%s+%s<;>%s\r\n", myT, throttle.address, throttle.address);
-					m.append(buf);
+					jumboMsg.append(buf);
 					//2025-03-18 append an array of function names.
 					//you need to escape \ in the string below as \\
 					//MTLaddr<;>]\[Headlight]\[Bell]\[Horn]\[
 					//we only support 16 functions, and can't store their names
 					//had to increase buf[] to 128
 					snprintf(buf, BUF_LEN, "M%sL%s<;>]\\[Headlight]\\[1]\\[2]\\[3]\\[4]\\[5]\\[6]\\[7]\\[8]\\[9]\\[10]\\[11]\\[12]\\[13]\\[14]\\[15]\\[\r\n", myT, throttle.address);
-					m.append(buf);
+					jumboMsg.append(buf);
 					//it is not necessary to immediately send the function states using MTAaddr<;>F00		
 					//end 2025-03-17
 
@@ -1326,7 +1367,7 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 					//now send speed and dir
 					snprintf(buf, BUF_LEN,"M%sA%s<;>V%d\r\n", myT, throttle.address, uint8_t(126 * loco[throttle.locoSlot].speed));
 					//test for estop - yet to implement
-					m.append(buf);
+					jumboMsg.append(buf);
 
 					if (loco[throttle.locoSlot].forward) {
 						snprintf(buf, BUF_LEN, "M%sA%s<;>R1\r\n", myT, throttle.address);
@@ -1334,7 +1375,7 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 					else {
 						snprintf(buf, BUF_LEN, "M%sA%s<;>R0\r\n", myT, throttle.address);
 					}
-					m.append(buf);
+					jumboMsg.append(buf);
 
 					throttle.MTaction = MT_NORMAL;
 					break;
@@ -1342,7 +1383,7 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 				case MT_STEAL:
 					//steal message is not based on the slot addr, rather the throttle addr MTSaddr<;>addr
 					snprintf(buf, BUF_LEN, "M%sS%s<;>%s\r\n", myT, throttle.address, throttle.address);
-					m.append(buf);
+					jumboMsg.append(buf);
 					//steal throttle placeholder has served its purpose, delete it 
 					throttle.locoSlot = -1;
 					throttle.MTaction = MT_GARBAGE;
@@ -1351,7 +1392,7 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 				case MT_RELEASE:
 					//MT-addr<;>addr
 					snprintf(buf, BUF_LEN,"M%s-%s<;>%s\r\n", myT, throttle.address, throttle.address);
-					m.append(buf);
+					jumboMsg.append(buf);
 					//tag the slot for garbage collection
 					throttle.locoSlot = -1;
 					throttle.MTaction = MT_GARBAGE;
@@ -1372,32 +1413,53 @@ void nsWiThrottle::broadcastChanges(bool clearFlags) {
 						//APPEND to msg
 						fState = ((loco[throttle.locoSlot].function & (1 << f)) == 0) ? 0 : 1;
 						snprintf(buf, BUF_LEN,"M%sA*<;>F%d%d\r\n", myT, fState, f);
-						m.append(buf);
+						jumboMsg.append(buf);
 					}
 				}//function
-		//	}//ip client match
 		
 		}//loop for throttle
 
 		//2020-11-27 append any client specific message
-		//2026-04-04 and these might be messages for LN or ESPACC clients
+		//2026-04-04 and these might be messages for LN or ACCESP clients
+		/*
 		for (auto g : messages) {
 			if ((g.toClient == nullptr) || (g.toClient == c.client)) {
-				m.append(g.msg);
+				jumboMsg.append(g.msg);
 			}
 		}
-		
+		*/
+
+		//2026-08-17 append any client specific messages or broadcast messages to that client type
+		//i.e. WiT or Loconet.  Debug clients receive all messages
+		for (auto g : messages) {
+			//is a specific client
+			if (g.toClient == c.client) {
+				jumboMsg.append(g.msg);
+				continue;
+			}
+			//is a debug client
+			if (c.HU=="DEBUG") {
+				jumboMsg.append(g.msg);
+				continue;
+			}
+			//is the matching client type	
+			if (c.isWiThrottle() == g.isWiThrottleMessage) {
+				jumboMsg.append(g.msg);
+			}
+		}
+
+
+
 		//have built a jumbo message on a per client basis, send this
 
 trace(
-		if (m.length() > 0) {
+		if (jumboMsg.length() > 0) {
 			Serial.println(F("\nWIT BCAST"));
-			Serial.printf("%s %s\n",c.HU.c_str(), m.c_str());
+			Serial.printf("%s %s\n",c.HU.c_str(), jumboMsg.c_str());
 			Serial.println(F("WIT BCAST END"));
 		}
 )
-		sendToClient(m, c.client);
-		
+		sendToClient(jumboMsg, c.client);
 
 	}//per client loop
 		
@@ -1458,18 +1520,23 @@ void nsWiThrottle::processTimeout() {
 #pragma endregion
 
 
+/*2026-08-17 rethink
+LN and ACCESP only should see loconet messages, and WiThrottles should only see WiT messages.
+previously giving nullptr as the client would broadcast the message to all WiT clients but now we have
+LN+ACCESP clients so need to be more specific in terms of who we broadcast to.
+
+Think further;
+we will send loconet messages or wiT messages.  the debug client sees both.  JMRI loconet and ACC_ESP loconet are the same
+protocol.  So really, all we need to know, when we are sending a message to a client is whether it is a WiThrottle or not.
+And when queuing messages, yes we need to know if we are queuing it for a wiThrottle or not.
+The original assumption was that if you sent a message with a null client target then it was for everyone, however that
+no longer holds true if we have WiT clients and loconet clients.
+And its more efficient for message queuing that you queue for all WiT clients than to raise a message for each WiT client.
 
 
-/// <summary>
-/// passes a locoNet message through to the ESPaccessoryController. The regular LocoNet-over-TCP protocol prefixes the payload with
-/// SEND and then expects to see that same payload echoed prefixed with RECEIVE.  I don't think this is useful, so will send one-way as RELAY
-/// and then the ESPA can respond with RECEIVE [sensor payload] or nothing if its a turnout or signal command.
-/// 
-/// </summary>
-/// <param name="msg">loconet message as a series of bytes and no preamble words</param>
-void nsWiThrottle::relayLocoNetMessage(std::string s) {
-	//note, this is relaying PP messages out to the ESPACC.  When the ESPACC reponds, we need to send that message back to PP
-	for (auto &c  : clients) {
-		if (c.HU == "ESPACC") queueMessage(s, c.client);
-	}
-}
+
+
+*/
+
+
+

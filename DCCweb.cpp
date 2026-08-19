@@ -4,6 +4,7 @@
 #include "DCCcore.h"
 #include "WiThrottle.h"
 #include "LocoNetprocessor.h"
+#include <ESP8266mDNS.h>
 
 
 /*
@@ -118,6 +119,9 @@ void getHardware() {
 	doc["AD"] = power.ADresult;
 	doc["heap"] = ESP.getFreeHeap();
 	doc["DSKY"] = bootController.hasDSKY;
+	doc["CPU"] = ESP.getCpuFreqMHz();
+	doc["ws"] = webSocket->connectedClients(true);
+	webSocket->broadcastPing();  //apparently closes unused sockets...
 	trace(serializeJson(doc, Serial);)
 
 
@@ -283,11 +287,18 @@ void nsDCCweb::startWebServices() {
 	// start the websocket server
 	webSocket = new WebSocketsServer(bootController.wsPort);
 	//2025-01-31 enableHeatbeat added to fix bug where Wifi is lost but the websocket does not disconnect causing all WS services to slow down
-	webSocket->enableHeartbeat(2000, 1000, 1);
+	webSocket->enableHeartbeat(8000, 3000, 2); //ping 8 sec, pong 3, 2 retry
 	webSocket->begin();
 	webSocket->onEvent(webSocketEvent);          // if there's an incomming websocket message, go to function 'webSocketEvent'
 
 	Serial.printf("WebSocket start port %d\n", bootController.wsPort);
+	
+	//start the mDNS server
+	if (!MDNS.begin("DCC_ESP")) {
+		Serial.println(F("Error setting up MDNS responder!"));
+	}
+
+
 
 }
 
@@ -295,6 +306,10 @@ void nsDCCweb::startWebServices() {
 void nsDCCweb::loopWebServices(void) {
 	web.handleClient();
 	webSocket->loop();
+	//2026-08-15 keep refreshing the MDNS responder
+	MDNS.update();
+	
+
 }
 
 #pragma endregion
@@ -306,7 +321,6 @@ void nsDCCweb::loopWebServices(void) {
 void nsDCCweb::webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) { // When a WebSocket message is received
 	
 	switch (type) {
-		
 	case WStype_DISCONNECTED:             // if the websocket is disconnected
 		trace(Serial.printf("[%u] WS Disconnected!\n", num);)
 			break;

@@ -24,6 +24,10 @@ namespace nsWiThrottle {
 		AsyncClient *client;
 		std::string HU;  //HU identifier from client
 		uint8_t timeout;
+		bool isWiThrottle(void) {
+			return (HU.find("HU") == 0);  //this client is a WiThrottle
+		}
+		/*
 		bool isDCCEX(void) {
 			return (HU == "EX");
 			//above is exact match, below is partial match
@@ -32,8 +36,10 @@ namespace nsWiThrottle {
 		bool isLOCONET(void) {
 			return (HU == "LN");
 		}
+		*/
 	};
 
+	//2028-06-17 we don't need these other methods and they only serve to increase the struct size.
 
 	struct THROTTLE
 	{
@@ -50,6 +56,7 @@ namespace nsWiThrottle {
 	{
 		std::string msg;   //safer inside a vector, will avoid memory leaks
 		AsyncClient* toClient;  //pointer to specific client, nullptr=all clients
+		bool isWiThrottleMessage;
 	};
 
 		
@@ -66,10 +73,8 @@ namespace nsWiThrottle {
 	void sendWiMinimal(AsyncClient* client);  //do i need this?
 	void processTimeout();
 	uint8_t clientCount(void);
-	bool queueMessage(std::string s, std::string identifier);  //overload for debug messages
 	bool queueMessage(std::string s, AsyncClient* client);
-	void relayLocoNetMessage(std::string s);
-
+	bool queueMessage(std::string s, bool forWiThrottle);
 
 
 	//local scope
