@@ -92,6 +92,7 @@ void getHardware() {
 	doc["pwd"] = bootController.pwd;
 	doc["version"] = bootController.softwareVersion;
 	doc["wsPort"] = bootController.wsPort;
+	doc["wiPort"] = bootController.tcpPort;
 	doc["networkIP"] = WiFi.localIP().toString();  //when connected to a router
 		
 	//2025-01-12 if we are not running as a softAP, we need to send the localIP
@@ -121,6 +122,8 @@ void getHardware() {
 	doc["DSKY"] = bootController.hasDSKY;
 	doc["CPU"] = ESP.getCpuFreqMHz();
 	doc["ws"] = webSocket->connectedClients(true);
+	doc["JMRI"] = nsWiThrottle::hasJMRI() ? "yes" : "no";
+
 	webSocket->broadcastPing();  //apparently closes unused sockets...
 	trace(serializeJson(doc, Serial);)
 

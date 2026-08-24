@@ -75,6 +75,7 @@ namespace nsWiThrottle {
 	uint8_t clientCount(void);
 	bool queueMessage(std::string s, AsyncClient* client);
 	bool queueMessage(std::string s, bool forWiThrottle);
+	bool hasJMRI();
 
 
 	//local scope

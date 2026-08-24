@@ -234,12 +234,14 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 			
 		case OPC_GPON:
 			power.trackPower = true;
+			nsWiThrottle::queueMessage("PPA1\r\n", true);
 			break;
 
 		case PC_GPOFF:
 			power.trackPower = false;
 			//exit service mode if we are in this
 			writeServiceCommand(0, 0, false, false, true);
+			nsWiThrottle::queueMessage("PPA0\r\n", true);
 		}
 		return;
 	}
@@ -291,7 +293,7 @@ void nsLOCONETprocessor::tokenProcessor(char* msg, AsyncClient* client) {
 
 			if (systemSlot == -1) {
 				//no free slots, send OPC_LONG_ACK 0xB4 0xBF 0x00 0xF4
-				nsWiThrottle::queueMessage("RECEIVE B4 BF 00 F4", client);
+				nsWiThrottle::queueMessage("RECEIVE B4 BF 00 F4\n", client);
 				return;
 			}
 
