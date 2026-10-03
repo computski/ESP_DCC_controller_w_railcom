@@ -15,7 +15,8 @@
 
 #include "Global.h"
 #include <ArduinoJson.h>   //from arduino library manager.  Using version 7.0.4
-#include <ESP8266WebServer.h>
+#include <ESPAsyncWebServer.h> // The core async web server library 
+#include <ESPAsyncTCP.h>
 #include <LittleFS.h>
 #include <WebSockets.h>  //from arduino library manager. Markus Sattler v2.1
 #include <WebSocketsServer.h>

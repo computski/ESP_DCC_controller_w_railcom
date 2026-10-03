@@ -20,14 +20,15 @@ Note: with Visual Micro you change the FS type to upload under option15 in the d
 
 2025-01-12 fixed WiFi and AP. You can connect to either, but not both together (as the softAP fails to send default gateway details to clients).
 
+2026-10-03 migrate to AsyncWebServer.
 */
 
 //CAUTION: bear in mind enabling trace will enable serial dumps, these take time and may delay subsequent code execution
 
 using namespace nsDCCweb;
 
-//reate a web server on port 80.  problems https://github.com/esp8266/Arduino/issues/4085
-ESP8266WebServer web(80);
+//2026-10-03 now using AsyncWebServer
+AsyncWebServer web(80);
 
 //2021-01-29 declare as a pointer, we need to instantate once wsPort is pulled from eeprom
 WebSocketsServer* webSocket;
@@ -41,65 +42,13 @@ WebSocketsServer* webSocket;
 
 #pragma region WEBSERVER_routines
 
-void handleRoot() {
-	//web.send(200, "text/html", "<h1>You are connected</h1>");
-	trace(Serial.println(F("HTTP server handleRoot."));)
-		//2021-12-01 Engine Driver will request the directory root, i.e. / if you activate its Web menu item
-
-
-		if (LittleFS.exists("/index.htm")) {
-			File file = LittleFS.open("/index.htm", "r");
-			size_t sent = web.streamFile(file, "text/html");  //we know its html!
-			file.close();
-		}
-		else {
-			trace(Serial.println(F("cannot find /index.htm"));)
-		}
-}
-
-String getContentType(String filename) { // convert the file extension to the MIME type
-	if (filename.endsWith(".htm")) return "text/html";
-	else if (filename.endsWith(".css")) return "text/css";
-	else if (filename.endsWith(".js")) return "application/javascript";
-	else if (filename.endsWith(".ico")) return "image/x-icon";
-	return "text/plain";
-}
-
-bool handleFileRead(String path) { // send the right file to the client (if it exists)
-	trace(Serial.println("handleFileRead: " + path);)
-		if (path.endsWith("/")) path += "index.htm";         // If a folder is requested, send the index file
-	String contentType = getContentType(path);            // Get the MIME type
-
-	if (LittleFS.exists(path)) {                            // If the file exists
-		File file = LittleFS.open(path, "r");                 // Open it
-		size_t sent = web.streamFile(file, contentType); // And send it to the client
-		file.close();                                       // Then close the file again
-		return true;
-	}
-
-	trace(Serial.println("\tFile Not Found " + path);)
-		return false;                                         // If the file doesn't exist, return false
-
-}
 
 //render a minimal hardware object as json back to the GET request, this gives the client the wsPort
-void getHardware() {
+void getHardware(AsyncWebServerRequest* request) {
 
 	JsonDocument doc;
 	doc["type"] = "dccUI";
-	/*
-	no point sending these, they are handled in poll requests
-	doc["cmd"] = "hardware";
-	doc["SSID"] = bootController.SSID;
-	doc["pwd"] = bootController.pwd;
-	doc["version"] = bootController.softwareVersion;
-	doc["wsPort"] = bootController.wsPort;
-	doc["wiPort"] = bootController.tcpPort;
-	doc["networkIP"] = WiFi.localIP().toString();  //when connected to a router
-	doc["action"] = "poll";
-	doc["STA_SSID"] = bootController.STA_SSID;
-	doc["STA_pwd"] = bootController.STA_pwd[0] == '\0' ? "none" : "*****";
-	*/
+	
 
 	//2026-09-19 add wsUri which gives the client a callback ws address and port
 	char buff[30];
@@ -140,12 +89,12 @@ void getHardware() {
 		//We can avoid a String class, but need to guesstimate a useful buffer size
 		char jsonChar[512];
 	serializeJsonPretty(doc, jsonChar, sizeof(jsonChar));
-	web.send(200, "text/json", jsonChar);
-
+	request->send(200, "application/json", jsonChar);  //AI says use this not "text/json" which is not a registered mime type
+	
 }
 
 //render loco roster as json back to the GET request
-void getRoster() {
+void getRoster(AsyncWebServerRequest* request) {
 	//JSON 7 doc knows you want to add elements to the root. no need for createOBject
 	//JSON 7 nested arrays are smartpointers
 
@@ -171,7 +120,7 @@ void getRoster() {
 	serializeJsonPretty(doc, Serial);
 	String r;
 	serializeJsonPretty(doc, r);
-	web.send(200, "text/json", r);
+	request->send(200, "application/json", r);
 }
 
 
@@ -261,32 +210,37 @@ void nsDCCweb::startWebServices() {
 
 
 	// Start a Web server
-	web.on("/", handleRoot);
-	web.onNotFound([]() {                              // If the client requests any URI
-		if (!handleFileRead(web.uri()))                  // send it if it exists
-			web.send(404, "text/plain", "404: Not Found"); // otherwise, respond with a 404 (Not Found) error
+	// Serve static files directly from LittleFS (fixes >21KB serving issue automatically)
+	//web.serveStatic("/", LittleFS, "/").setDefaultFile("index.htm");
+	web.serveStatic("/", LittleFS, "/").setDefaultFile("hardware.htm");
+
+	// special GET handlers
+	web.on("/hardware", HTTP_GET, [](AsyncWebServerRequest* request) { getHardware(request); });
+
+	web.on("/hardware", HTTP_OPTIONS, [](AsyncWebServerRequest* request) {
+		AsyncWebServerResponse* response = request->beginResponse(204);
+		response->addHeader("access-control-allow-credentials", "false");
+		response->addHeader("access-control-allow-headers", "x-requested-with");
+		response->addHeader("access-control-allow-methods", "GET,OPTIONS");
+		request->send(response);
 		});
 
-	//special GET handlers
-	//https://forum.arduino.cc/index.php?topic=476291.0
-	web.on("/hardware", HTTP_GET, []() {getHardware(); });
 
-	web.on("/hardware", HTTP_OPTIONS, []() {
-		web.sendHeader("access-control-allow-credentials", "false");
-		web.sendHeader("access-control-allow-headers", "x-requested-with");
-		web.sendHeader("access-control-allow-methods", "GET,OPTIONS");
-		web.send(204);
+	web.on("/roster", HTTP_GET, [](AsyncWebServerRequest* request) { getRoster(request); });
+
+	web.on("/roster", HTTP_OPTIONS, [](AsyncWebServerRequest* request) {
+		AsyncWebServerResponse* response = request->beginResponse(204);
+		response->addHeader("access-control-allow-credentials", "false");
+		response->addHeader("access-control-allow-headers", "x-requested-with");
+		response->addHeader("access-control-allow-methods", "GET,OPTIONS");
+		request->send(response);
 		});
 
+	// 404 Handler
+	web.onNotFound([](AsyncWebServerRequest* request) {
+		request->send(404, "text/plain", "404: Not Found");
+	});
 
-	web.on("/roster", HTTP_GET, []() {getRoster(); });
-
-	web.on("/roster", HTTP_OPTIONS, []() {
-		web.sendHeader("access-control-allow-credentials", "false");
-		web.sendHeader("access-control-allow-headers", "x-requested-with");
-		web.sendHeader("access-control-allow-methods", "GET,OPTIONS");
-		web.send(204);
-		});
 
 	web.begin();    // start the HTTP server
 	Serial.println(F("HTTP server started."));
@@ -316,7 +270,6 @@ void nsDCCweb::startWebServices() {
 
 //call regularly from main loop
 void nsDCCweb::loopWebServices(void) {
-	web.handleClient();
 	webSocket->loop();
 	//2026-08-15 keep refreshing the MDNS responder
 	MDNS.update();
