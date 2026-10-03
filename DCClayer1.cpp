@@ -553,11 +553,12 @@ void railcomInit() {
 	
 	//railcom uses 250kbaud, don't enable this baud rate if we are compiling for TRACE because trace needs the serial port
 #ifndef TRACE
+	Serial.println(F("Starting railcom"));
+	Serial.flush();
 	Serial.end();
 	Serial.begin(250000);
 #else
 	Serial.println(F("Railcom disabled by trace"));
-	Serial.begin(115200);
 #endif // !TRACE
 
 	_rcstate = RC_EXPECT_ID0;

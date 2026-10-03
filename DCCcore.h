@@ -22,7 +22,7 @@
 /*version control and capture of some system defaults for new compilations*/
 struct CONTROLLER
 {
-	long	softwareVersion = 20260205;  //yyyymmdd captured as an integer
+	long	softwareVersion = 20260919;  //yyyymmdd captured as an integer
 	uint16_t	currentLimit = 1000;
 	uint8_t	voltageLimit = 15;
 	char SSID[21] = "DCC_ESP";
@@ -39,7 +39,9 @@ struct CONTROLLER
 	bool hasDSKY = false;
 };
 
-//note for testing
+
+
+//note for testing on local AP
 //home page is http://192.168.6.1/index.htm
 //websocket tests on ws://192.168.6.1:12080
 
@@ -204,12 +206,12 @@ enum dccSTATE
 
 
 
-
+//using inline without initial value means the var reverts to extern
 
 extern TURNOUT turnout[MAX_TURNOUT];
 extern LOCO loco[MAX_LOCO];
 extern POWER power;
-extern CONTROLLER bootController;
+inline CONTROLLER bootController;
 extern ACCESSORY accessory;
 extern dccSTATE dccSE;
 

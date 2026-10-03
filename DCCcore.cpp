@@ -64,7 +64,6 @@ static void (*LocoNetcallbackPtr)(bool,uint8_t);
 
 /*defaultController contains defaults defined in the CONTROLLER object (DCCcore.h) and is used to override eeprom settings
 on new compilations where data structures have changed.  The system runs off the bootController object normally*/
-CONTROLLER bootController;
 
 
 /*These are defined as externs in the header, they are instanced here*/
@@ -192,7 +191,6 @@ static uint8_t m_locoIndex = 0;
 static uint8_t m_funcIndex = 0;
 
 dccSTATE dccSE = DCC_LOCO;
-
 
 /*turnout related*/
 enum turnoutSTATE

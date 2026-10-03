@@ -57,9 +57,10 @@
 uint8_t secCount;
 
 void setup() {
+	Serial.begin(115200);
+
 	//Note: set the CPU clock freq to 160 in the IDE rather than using this dynamic update line
 	//system_update_cpu_freq(160);
-	
 	Serial.println(F("\n\nBoot DCC ESP"));
 	trace(
 		Serial.println(F("trace enabled"));
@@ -67,6 +68,9 @@ void setup() {
 			)
 		//2021-10-19 the unit can operate in DCC mode, or in DC mode pwm which supports a single loco, loco 3 with 28 speed steps
 		//enable or disable the DC block as required in Global.h  DCC and DC are mutually exclusive
+
+
+		
 
 #ifdef	DC_PINS
 //If DC_PINS is defined, this overrides DCC and we will create a DC system.  Entirel optional. If you want 

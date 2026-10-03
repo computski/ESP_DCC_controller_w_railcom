@@ -87,6 +87,8 @@ void getHardware() {
 
 	JsonDocument doc;
 	doc["type"] = "dccUI";
+	/*
+	no point sending these, they are handled in poll requests
 	doc["cmd"] = "hardware";
 	doc["SSID"] = bootController.SSID;
 	doc["pwd"] = bootController.pwd;
@@ -94,22 +96,28 @@ void getHardware() {
 	doc["wsPort"] = bootController.wsPort;
 	doc["wiPort"] = bootController.tcpPort;
 	doc["networkIP"] = WiFi.localIP().toString();  //when connected to a router
-		
-	//2025-01-12 if we are not running as a softAP, we need to send the localIP
-	//2026-02-22 this is because the web pages expect to use the [IP] param to find the websocket.  Its a bit bodgey
-	//but we have to substitute the localIP, aka network IP if we are connected to a router.
-	if (WiFi.getMode() == WIFI_AP) {
-		//send the AP default gateway
-		doc["IP"] = bootController.IP;
-	}
-	else {
-		//do not convert to cstr() else we get garbage at the client
-		doc["IP"] = WiFi.localIP().toString();
-	}
-	
 	doc["action"] = "poll";
 	doc["STA_SSID"] = bootController.STA_SSID;
 	doc["STA_pwd"] = bootController.STA_pwd[0] == '\0' ? "none" : "*****";
+	*/
+
+	//2026-09-19 add wsUri which gives the client a callback ws address and port
+	char buff[30];
+	
+	if (WiFi.getMode() == WIFI_AP) {
+		snprintf(buff, sizeof(buff), "ws://%s:%d", bootController.IP, bootController.wsPort);
+		//send the AP default gateway
+		
+	}
+	else {
+		//do not convert to cstr() else we get garbage at the client
+		snprintf(buff, sizeof(buff), "ws://%s:%d", WiFi.localIP().toString().c_str(), bootController.wsPort);
+	}
+	doc["wsUri"] = buff;
+	
+	
+
+
 	//additional debug params for this routine only
 	doc["uptime"] = int(millis() / 1000);
 	doc["clients"] = nsWiThrottle::clientCount();
@@ -286,6 +294,7 @@ void nsDCCweb::startWebServices() {
 	// Start the  Flash Files System
 	LittleFS.begin();
 
+	listRootFiles();
 
 	// start the websocket server
 	webSocket = new WebSocketsServer(bootController.wsPort);
@@ -1226,6 +1235,17 @@ void nsDCCweb::broadcastChanges(void) {
 	}
 	sendJson(out);
 
+}
+
+void nsDCCweb::listRootFiles() {
+	Serial.println(F("LittleFS files in root directory:"));
+	Dir root = LittleFS.openDir("/");
+	while (root.next()) {
+		Serial.print("File: ");
+		Serial.print(root.fileName());
+		Serial.print(" | Size: ");
+		Serial.println(root.fileSize());
+	}
 }
 
 #pragma endregion
