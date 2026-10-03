@@ -1,28 +1,20 @@
 ﻿<html xmlns="http://www.w3.org/1999/xhtml">
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!--2024-12-06-->
-    <!--galaxy S9 viewport size is 360 x 740 PX -->
-    <!--galaxy S5 viewport size is 360 x 640 PX -->
-    <!--https://css-tricks.com/snippets/css/a-guide-to-flexbox/-->
-
+   
     <title>DCC ESP controller - POM</title>
 
 
+  <!--updated 2026-09-10-->
     <style>
         .outer {
             border: solid;
+	    border-top: none;
             border-width: 1px;
             padding-left: 2vw;
         }
 
-        .outerX {
-            display: flex;
-            flex-direction: column;
-            background: none;
-            height: 100%;
-        }
-
+     
         .trip {
             background-color: orangered;
         }
@@ -49,7 +41,7 @@
             font-size: 4vmin;
         }
 
-        select, option, #addr {
+         select, option, #addr {
             width: 20vw;
             font-size: 4vmin;
         }
@@ -58,6 +50,8 @@
             transform: scale(2);
            
         }
+
+
 
         BODY {
             FONT-SIZE: 4vmin;
@@ -71,7 +65,38 @@
         table {
             font-size: 4vmin;
         }
+
+.tabSel{
+  		background: none;
+		border: 1px solid black;
+  		border-bottom: none;
+  		padding: 0;
+  		font-weight: bold;
+		color: black;
+ 	 	cursor: pointer;
+		text-decoration: none; /* Removes default underline */
+	}
+
+	.tab{
+		background: none;
+		border: none;
+  		border-bottom: 1px solid black;
+  		padding: 0;
+  		font-weight: normal;
+  		cursor: pointer;
+		color: black;
+		text-decoration: none; /* Removes default underline */
+	}
+
+	.button-container {
+  		display: flex;       /* Activates layout engine */
+  		flex-direction: row; /* Aligns items horizontally */
+  		gap: 0px;           /* Puts clean spacing between the buttons */
+  		white-space: nowrap; /* Forces content to stay on one line */
+	}
+
     </style>
+
 
     <script type="text/javascript">
        // var wsUri = "wss://echo.websocket.org/";
@@ -126,7 +151,8 @@
                         if (!myObj.type) return;
                         if (myObj.type != "dccUI") return;
                         hardware = myObj;
-                        wsUri = "ws://" + hardware.IP + ":" + hardware.wsPort
+                        //wsUri = "ws://" + hardware.IP + ":" + hardware.wsPort;
+			wsUri=hardware.wsUri;
                         if (console) console.log(wsUri);
                         //connect to the websocket provided by the ESP server
                         initWebsocket();
@@ -454,15 +480,28 @@
 </head>
 
 <body onload="boot()">
-    <div class="outer" >
-    <p><b>DCC ESP POM Mode</b></p>
+<div class="button-container">
+<input type="button" value="Locos " class="tab" onclick="window.location.href='roster.htm';"/>
+<input type="button" value=" Turnouts " class="tab"  onclick="window.location.href='turnout.htm';"/>
+<input type="button" value="  POM  " class="tabSel"  onclick="debug.classList.toggle('nominal');"/>
+<input type="button" value="  Service  " class="tab" onclick="window.location.href='service.htm';"/>
+<input type="button" value=" Power " class="tab" onclick="window.location.href='index.htm';"/>
+<input type="button" value=" Hardware " class="tab" onclick="window.location.href='hardware.htm';" />
+</div>
 
+
+
+    <div class="outer" >
+<br/>
+    <b>Program On Main</b>
+<br/>
     <table border="0" style="width:100%">
-        <tr>
+  	<tr>
             <td style="width:40%"> Status</td>
             <td id="msg"> &nbsp;</td>
         </tr>
-        <tr>
+
+         <tr>
             <td> mA</td>
             <td id="displaymA"> </td>
         </tr>
@@ -520,18 +559,11 @@
             <td> <input type="button" id="btnReadBit" value="BIT READ" onclick="readByte()"> </td>
         </tr>
 
-        <tr><td colspan="2"> <span id="debug" style="visibility:hidden; font-size:2vmin"> </span></td></tr>
+        <tr><td colspan="2"> <span id="debug" style="font-size:2vmin" class="nominal"> </span></td></tr>
      </table>
        
     <br />
-    <br />
-    <a href="roster.htm" >locomotive roster</a><br /><br />
-    <a href="turnout.htm" >turnout roster</a><br /><br />
-    <a href="index.htm" >home</a><br /><br />
    
-
-
-
         </div>
 
 

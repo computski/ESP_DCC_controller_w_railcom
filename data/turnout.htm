@@ -3,19 +3,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
  
     <title>DCC ESP controller - turnout roster</title>
-    <!--2021-01-27-->
+    <!--2026-09-10-->
        <style>
         .outer {
             border: solid;
+		border-top:none;
             border-width: 1px;
             padding-left: 2vw;
-        }
-
-        .outerX {
-            display: flex;
-            flex-direction: column;
-            background: none;
-            height: 100%;
         }
 
         .trip {
@@ -66,6 +60,36 @@
         table {
             font-size: 4vmin;
         }
+
+.tabSel{
+  		background: none;
+		border: 1px solid black;
+  		border-bottom: none;
+  		padding: 0;
+  		font-weight: bold;
+		color: black;
+ 	 	cursor: pointer;
+		text-decoration: none; /* Removes default underline */
+	}
+
+	.tab{
+		background: none;
+		border: none;
+  		border-bottom: 1px solid black;
+  		padding: 0;
+  		font-weight: normal;
+  		cursor: pointer;
+		color: black;
+		text-decoration: none; /* Removes default underline */
+	}
+
+	.button-container {
+  		display: flex;       /* Activates layout engine */
+  		flex-direction: row; /* Aligns items horizontally */
+  		gap: 0px;           /* Puts clean spacing between the buttons */
+  		white-space: nowrap; /* Forces content to stay on one line */
+	}
+
     </style>
 
     <script type="text/javascript">
@@ -92,9 +116,7 @@
         //then we fall back to the default wsUri defined above.
         function boot() {
             if (attempts > 10) { return; }
-            //var re = /echo/gm;
-            //if (re.test(wsUri)) {
-            attempts++;
+             attempts++;
             if (attempts > 2) {
                 //connect anyway to the default wsUri
                 initWebsocket();
@@ -104,9 +126,6 @@
                 //and call self again to check we are done
                 setTimeout(function () { boot(); }, 3000);
             }
-            //}
-
-
         }
 
 
@@ -126,7 +145,8 @@
                         if (!myObj.type) return;
                         if (myObj.type != "dccUI") return;
                         hardware = myObj;
-                        wsUri = "ws://" + hardware.IP + ":" + hardware.wsPort
+                        wsUri = "ws://" + hardware.IP + ":" + hardware.wsPort;
+			wsUri=hardware.wsUri;
                         if (console) console.log(wsUri);
                         //connect to the websocket provided by the ESP server
                         initWebsocket();
@@ -326,8 +346,20 @@
 
 
 <body onload="boot()">
+
+<div class="button-container">
+<input type="button" value="Locos " class="tab" onclick="window.location.href='roster.htm';"/>
+<input type="button" value=" Turnouts " class="tabSel" onclick="debug.classList.toggle('nominal');" />
+<input type="button" value="  POM  " class="tab"  onclick="window.location.href='pom.htm';"/>
+<input type="button" value="  Service  " class="tab" onclick="window.location.href='service.htm';"/>
+<input type="button" value=" Power " class="tab" onclick="window.location.href='index.htm';"/>
+<input type="button" value=" Hardware " class="tab" onclick="window.location.href='hardware.htm';" />
+</div>
+
+<!-- onclick="debug.classList.toggle('nominal');" -->
+
     <div class="outer">
-        <p><b>DCC ESP turnout roster</b></p>
+       <br/>
 
    
         <table id="entries" border="0" style="width:100%">
@@ -358,9 +390,8 @@
 
         <br />
         <br />
-        <a href="roster.htm">loco roster</a><br /><br />
-        <a href="index.htm">home</a><br /><br />
-         <p id="debug" style="visibility:hidden; font-size:2vmin"> </p>
+     
+         <p id="debug" style="font-size:2vmin" class="nominal">debug </p>
 
     </div>
 

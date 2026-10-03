@@ -3,21 +3,16 @@
     <title>DCC ESP controller - hardware</title>
  	<meta name="viewport" content="width=device-width, initial-scale=1.0">
    
-    <!--updated 2025-01-13-->
+    <!--updated 2026-09-10-->
     <style>
         .outer {
             border: solid;
+	    border-top: none;
             border-width: 1px;
             padding-left: 2vw;
         }
 
-        .outerX {
-            display: flex;
-            flex-direction: column;
-            background: none;
-            height: 100%;
-        }
-
+     
         .trip {
             background-color: orangered;
         }
@@ -56,6 +51,36 @@
         table {
             font-size: 4vmin;
         }
+
+.tabSel{
+  		background: none;
+		border: 1px solid black;
+  		border-bottom: none;
+  		padding: 0;
+  		font-weight: bold;
+		color: black;
+ 	 	cursor: pointer;
+		text-decoration: none; /* Removes default underline */
+	}
+
+	.tab{
+		background: none;
+		border: none;
+  		border-bottom: 1px solid black;
+  		padding: 0;
+  		font-weight: normal;
+  		cursor: pointer;
+		color: black;
+		text-decoration: none; /* Removes default underline */
+	}
+
+	.button-container {
+  		display: flex;       /* Activates layout engine */
+  		flex-direction: row; /* Aligns items horizontally */
+  		gap: 0px;           /* Puts clean spacing between the buttons */
+  		white-space: nowrap; /* Forces content to stay on one line */
+	}
+
     </style>
 
     <script type="text/javascript">
@@ -103,8 +128,9 @@
                         if (!myObj.type) return;
                         if (myObj.type != "dccUI") return;
                         hardware = myObj;
-                        wsUri = "ws://" + hardware.IP + ":" + hardware.wsPort
-                        if (console) console.log(wsUri);
+                        //wsUri = "ws://" + hardware.IP + ":" + hardware.wsPort;
+                        wsUri=hardware.wsUri;
+			if (console) console.log(wsUri);
                         //connect to the websocket provided by the ESP server
                         initWebsocket();
                     }
@@ -173,7 +199,11 @@
 
    
         function repaintUI() {
+	
             try {
+
+		if (console) {console.log("repaintUI"); }
+
                 var myObj = JSON.parse(debug.innerHTML);
                 if (!myObj.type) {
                     return;
@@ -264,9 +294,10 @@
             }
 
             hardware.action = isValid ? action:"poll";
-		
+	    hardware.type="dccUI";	
+	    hardware.cmd="hardware";
 
-            if (console) { (console.log("setHardware")) };
+            if (console) { (console.log("setHardware "+ isValid)) };
             var myJSON = JSON.stringify(hardware);
             debug.innerHTML = myJSON;
             ws.send(myJSON);
@@ -280,8 +311,17 @@
 </head>
 
 <body onload="boot()">
+<div class="button-container">
+<input type="button" value="Locos " class="tab" onclick="window.location.href='roster.htm';"/>
+<input type="button" value=" Turnouts " class="tab"  onclick="window.location.href='turnout.htm';"/>
+<input type="button" value="  POM  " class="tab"  onclick="window.location.href='pom.htm';"/>
+<input type="button" value="  Service  " class="tab" onclick="window.location.href='service.htm';"/>
+<input type="button" value=" Power " class="tab" onclick="window.location.href='index.htm';"/>
+<input type="button" value=" Hardware " class="tabSel" onclick="debug.classList.toggle('nominal');"/>
+</div>
+
     <div class="outer">
-        <p><b>DCC ESP hardware</b></p>
+     <br/>
 
         <table border="0" style="width:100%">
             <tr> <td width="40%">SSID</td><td width="60%"><input type="text" id="SSID" maxlength="18" /></td> </tr>
@@ -296,7 +336,7 @@
 
             <tr> <td>Network SSID</td><td><input type="text" id="STA_SSID" maxlength="18" /></td> </tr>
             <tr> <td>Network password</td><td><input type="text" id="STA_pwd" maxlength="18" /></td> </tr>
-            <tr> <td>Network IP</td><td><input type="text" id="STA_IP" /></td> </tr>
+            <tr> <td>Network IP</td><td><input type="text" id="STA_IP" readonly /></td> </tr>
 
 
             <tr>
@@ -319,10 +359,7 @@
         Use the MAC to set a fixed IP address on your home router. 
         You may also need to port-forward the Web socket and WiThrottle ports. Your router assigns the network IP address.
         <br />
-        <br />
-
-        <a href="index.htm">home</a><br /><br />
-        <p id="debug" style="visibility:hidden; font-size:2vmin"> </p>
+        <p id="debug" style="font-size:2vmin" class="nominal">debug </p>
 
     </div>
 
